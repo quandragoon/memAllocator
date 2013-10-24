@@ -46,8 +46,19 @@
 // Rounds up to the nearest multiple of ALIGNMENT.
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~(ALIGNMENT-1))
 
-// The smallest aligned size that will hold a size_t value.
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+// The size of a size_t in bytes.
+#define SIZE_T_SIZE (sizeof(size_t))
+
+struct free_list {
+  struct free_list* next;
+  size_t size;
+};
+
+typedef struct free_list Free_List;
+// The smallest aligned value that will hold the header for the free list.
+#define FREE_LIST_SIZE (ALIGN(sizeof(Free_List)))
+
+Free_List* freeListBins[SIZE_T_SIZE];
 
 // check - This checks our invariant that the size_t header before every
 // block points to either the beginning of the next block, or the end of the
@@ -77,16 +88,78 @@ int my_check() {
 // calls are made.  Since this is a very simple implementation, we just
 // return success.
 int my_init() {
+  for (int i = 0; i < SIZE_T_SIZE; i++) {
+    freeListBins[i] = NULL;
+  }
   return 0;
 }
 
+// There is a bit hack to do this in lg N ops where
+// N is the number of bits of val (lglg(val)).
+// Much faster than current version but current
+// version is just a placeholder until malloc
+// and free are working.
+size_t log_upper(size_t val) {
+  size_t next = val - 1;
+  size_t r = 0;
+  // since we have subtracted 1, the number of bits
+  // upto most significant 1.
+  // val = 10000 -> next = 1111 -> r = 4
+  // val = 11010 -> next = 11001 -> r = 5
+  while (next) {
+    r++;
+    next >>= 1;
+  }
+  return r;
+}
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
+  // Find the upper bound lg of size to find corresponding bin
+  // If bin is not null, we allocate
+  size_t lg_size = log_upper(size);
+  while (lg_size < SIZE_T_SIZE) {
+    // Find big enough de-allocated block
+    if (freeListBins[lg_size] != NULL) {
+      Free_List *cur = freeListBins[lg_size];
+      freeListBins[lg_size] = cur->next;
+      //NOTE: We need a break up procedure to be more efficient
+      //since this will be WAY more memory than is needed.
+      return (void *)((char *) cur + FREE_LIST_SIZE);
+    }
+    lg_size++;
+  }
+  /*
+  if (freeList != NULL) {
+    if (freeList->size == size) {
+      FREE_LIST *r = freeList;
+      freeList = freeList->next;
+      return (void *)r;
+    }
+    else if (freeList->size >= size) {
+      //do something
+    }
+    FREE_LIST *prev = freeList;
+    FREE_LIST *cur = freeList->next;
+    while (cur != NULL) {
+      if (cur->size >= size) {
+        if (cur->size == size) {
+          prev->next = cur->next;
+          return (void *) ++cur;
+        }
+        size_t diff = cur->size - size;
+        // do something here
+        return (void *)((char *)cur + diff);
+      }
+    }
+    
+  }
+  */
+
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
   // one example of a place where this can come in handy.
-  int aligned_size = ALIGN(size + SIZE_T_SIZE);
+  int aligned_size = ALIGN(size + FREE_LIST_SIZE);
 
   // Expands the heap by the given number of bytes and returns a pointer to
   // the newly-allocated area.  This is a slow call, so you will want to
@@ -99,21 +172,35 @@ void * my_malloc(size_t size) {
     return NULL;
   } else {
     // We store the size of the block we've allocated in the first
-    // SIZE_T_SIZE bytes.
-    *(size_t*)p = size;
+    // FREE_LIST_SIZE bytes.
+    ((Free_List*)p)->next = NULL;
+    ((Free_List*)p)->size = size;
 
     // Then, we return a pointer to the rest of the block of memory,
     // which is at least size bytes long.  We have to cast to uint8_t
     // before we try any pointer arithmetic because voids have no size
     // and so the compiler doesn't know how far to move the pointer.
-    // Since a uint8_t is always one byte, adding SIZE_T_SIZE after
-    // casting advances the pointer by SIZE_T_SIZE bytes.
-    return (void *)((char *)p + SIZE_T_SIZE);
+    // Since a uint8_t is always one byte, adding FREE_LIST_SIZE after
+    // casting advances the pointer by FREE_LIST_SIZE bytes.
+    return (void *)((char *)p + FREE_LIST_SIZE);
   }
 }
 
 // free - Freeing a block does nothing.
 void my_free(void *ptr) {
+  Free_List* cur = (Free_List*)((char *)ptr - FREE_LIST_SIZE); 
+  size_t size = cur->size;
+  // Want to place freed block in a bin
+  // that will allow it to be sufficient
+  // for any future query of that size (2^k).
+  // In other words, put in kth bin if
+  // 2^k < size <= 2^(k+1)
+  // NOTE: Do a power of two check here
+  // to prevent putting 2^k in k-1 bin.
+  size_t index = log_upper(size) - 1;
+  // Append to front of free list
+  cur->next = freeListBins[index];
+  freeListBins[index] = cur;
 }
 
 // realloc - Implemented simply in terms of malloc and free
