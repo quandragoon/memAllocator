@@ -117,11 +117,23 @@ size_t log_upper(size_t val) {
 void * my_malloc(size_t size) {
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
+  size += FREE_LIST_SIZE;
+  size_t align = ALIGN(size);
   size_t lg_size = log_upper(size);
   while (lg_size < SIZE_T_SIZE) {
     // Find big enough de-allocated block
     if (freeListBins[lg_size] != NULL) {
       Free_List *cur = freeListBins[lg_size];
+      
+      if (cur->size - align > FREE_LIST_SIZE) {
+        cur->size = align;
+        Free_List* chunk = (Free_List *)((char *) cur + align);
+        // Since we allocate aligned sizes, the leftover chunk is also
+        // going to be aligned.
+        chunk->size = cur->size - align;
+        void* ptr = (void *)((char *) chunk + FREE_LIST_SIZE);
+        my_free(ptr);
+      }
       freeListBins[lg_size] = cur->next;
       //NOTE: We need a break up procedure to be more efficient
       //since this will be WAY more memory than is needed.
@@ -174,7 +186,7 @@ void * my_malloc(size_t size) {
     // We store the size of the block we've allocated in the first
     // FREE_LIST_SIZE bytes.
     ((Free_List*)p)->next = NULL;
-    ((Free_List*)p)->size = size;
+    ((Free_List*)p)->size = aligned_size;
 
     // Then, we return a pointer to the rest of the block of memory,
     // which is at least size bytes long.  We have to cast to uint8_t
@@ -214,10 +226,11 @@ void * my_realloc(void *ptr, size_t size) {
     return NULL;
 
   // Get the size of the old block of memory.  Take a peek at my_malloc(),
-  // where we stashed this in the SIZE_T_SIZE bytes directly before the
+  // where we stashed this in the FREE_LIST_SIZE bytes directly before the
   // address we returned.  Now we can back up by that many bytes and read
-  // the size.
-  copy_size = *(size_t*)((uint8_t*)ptr - SIZE_T_SIZE);
+  // the size by pulling it from the free list header.
+  Free_List* mem = (Free_List*)((uint8_t*)ptr - FREE_LIST_SIZE);
+  copy_size = mem->size - FREE_LIST_SIZE;
 
   // If the new block is smaller than the old one, we have to stop copying
   // early so that we don't write off the end of the new block of memory.
