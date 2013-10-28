@@ -131,6 +131,7 @@ void * my_malloc(size_t size) {
         // Since we allocate aligned sizes, the leftover chunk is also
         // going to be aligned.
         chunk->size = cur->size - aligned_size;
+        chunk->next = NULL;
         void* ptr = (void *)((char *) chunk + FREE_LIST_SIZE);
         my_free(ptr);
       }
@@ -141,32 +142,6 @@ void * my_malloc(size_t size) {
     }
     lg_size++;
   }
-  /*
-  if (freeList != NULL) {
-    if (freeList->size == size) {
-      FREE_LIST *r = freeList;
-      freeList = freeList->next;
-      return (void *)r;
-    }
-    else if (freeList->size >= size) {
-      //do something
-    }
-    FREE_LIST *prev = freeList;
-    FREE_LIST *cur = freeList->next;
-    while (cur != NULL) {
-      if (cur->size >= size) {
-        if (cur->size == size) {
-          prev->next = cur->next;
-          return (void *) ++cur;
-        }
-        size_t diff = cur->size - size;
-        // do something here
-        return (void *)((char *)cur + diff);
-      }
-    }
-    
-  }
-  */
 
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
@@ -203,6 +178,7 @@ void my_free(void *ptr) {
   size_t size = cur->size;
   // int s = (int) size;
   // printf("Size of Freed: %d \n", s);
+
   // Want to place freed block in a bin
   // that will allow it to be sufficient
   // for any future query of that size (2^k).
