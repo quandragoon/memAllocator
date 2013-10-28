@@ -46,8 +46,8 @@
 // Rounds up to the nearest multiple of ALIGNMENT.
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~(ALIGNMENT-1))
 
-// The size of a size_t in bytes.
-#define SIZE_T_SIZE (sizeof(size_t))
+// The size of a size_t in bits (approx).
+#define SIZE_T_SIZE (sizeof(size_t) * 3 + 4)
 
 struct free_list {
   struct free_list* next;
@@ -118,19 +118,19 @@ void * my_malloc(size_t size) {
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
   size += FREE_LIST_SIZE;
-  size_t align = ALIGN(size);
+  size_t aligned_size = ALIGN(size);
   size_t lg_size = log_upper(size);
   while (lg_size < SIZE_T_SIZE) {
     // Find big enough de-allocated block
     if (freeListBins[lg_size] != NULL) {
       Free_List *cur = freeListBins[lg_size];
       
-      if (cur->size - align > FREE_LIST_SIZE) {
-        cur->size = align;
-        Free_List* chunk = (Free_List *)((char *) cur + align);
+      if (cur->size - aligned_size > FREE_LIST_SIZE) {
+        cur->size = aligned_size;
+        Free_List* chunk = (Free_List *)((char *) cur + aligned_size);
         // Since we allocate aligned sizes, the leftover chunk is also
         // going to be aligned.
-        chunk->size = cur->size - align;
+        chunk->size = cur->size - aligned_size;
         void* ptr = (void *)((char *) chunk + FREE_LIST_SIZE);
         my_free(ptr);
       }
@@ -171,7 +171,6 @@ void * my_malloc(size_t size) {
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
   // one example of a place where this can come in handy.
-  int aligned_size = ALIGN(size + FREE_LIST_SIZE);
 
   // Expands the heap by the given number of bytes and returns a pointer to
   // the newly-allocated area.  This is a slow call, so you will want to
@@ -202,6 +201,8 @@ void * my_malloc(size_t size) {
 void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char *)ptr - FREE_LIST_SIZE); 
   size_t size = cur->size;
+  // int s = (int) size;
+  // printf("Size of Freed: %d \n", s);
   // Want to place freed block in a bin
   // that will allow it to be sufficient
   // for any future query of that size (2^k).
