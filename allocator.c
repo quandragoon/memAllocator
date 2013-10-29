@@ -71,7 +71,8 @@ int my_check() {
 
   p = lo;
   while (lo <= p && p < hi) {
-    size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
+    Free_List *cur = (Free_List*)p;
+    size = ALIGN(cur->size);
     p += size;
   }
 
@@ -81,6 +82,16 @@ int my_check() {
     return -1;
   }
 
+  for (int i=0; i < SIZE_T_SIZE; i++) {
+    Free_List *this = freeListBins[i];
+    while (this) {
+      if (this->size <= (1 << (i-1)) || this->size > (1 << i)) {
+        printf("You seriously suck. Bin %d had a fucked up node\n", i);
+        return -1;
+      }
+      this = this->next;
+    }
+  }
   return 0;
 }
 
@@ -100,6 +111,8 @@ int my_init() {
 // version is just a placeholder until malloc
 // and free are working.
 size_t log_upper(size_t val) {
+  if (val == 0)
+    return 0;
   size_t next = val - 1;
   size_t r = 0;
   // since we have subtracted 1, the number of bits
@@ -115,32 +128,53 @@ size_t log_upper(size_t val) {
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
+  if (my_check() == -1) {
+    printf("Invariants failing in my_malloc\n");
+  }
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
   size += FREE_LIST_SIZE;
   size_t aligned_size = ALIGN(size);
-  size_t lg_size = log_upper(size);
-  while (lg_size < SIZE_T_SIZE) {
+  size_t lg_size = log_upper(aligned_size);
+  Free_List *cur = freeListBins[lg_size];
+   
+  Free_List *prev = NULL;
+  while (cur != NULL && cur->size < aligned_size) {
+    // Iterate through list until we find accurate size.
+    prev = cur;
+    cur = cur->next;
+  }
+  if (cur != NULL) {
+    // Extract the node if we found it.
+    if (prev == NULL) {
+      freeListBins[lg_size] = cur->next;
+    }
+    else {
+      prev->next = cur->next;
+    }
+    return (void *)((char *) cur + FREE_LIST_SIZE);
+  }
+  size_t index = lg_size + 1;
+  while (index < SIZE_T_SIZE) {
     // Find big enough de-allocated block
-    if (freeListBins[lg_size] != NULL) {
-      Free_List *cur = freeListBins[lg_size];
-      
+    if (freeListBins[index] != NULL) {
+      cur = freeListBins[index]; 
       if (cur->size - aligned_size > FREE_LIST_SIZE) {
-        cur->size = aligned_size;
         Free_List* chunk = (Free_List *)((char *) cur + aligned_size);
         // Since we allocate aligned sizes, the leftover chunk is also
         // going to be aligned.
         chunk->size = cur->size - aligned_size;
+        cur->size = aligned_size;
         chunk->next = NULL;
         void* ptr = (void *)((char *) chunk + FREE_LIST_SIZE);
         my_free(ptr);
       }
-      freeListBins[lg_size] = cur->next;
+      freeListBins[index] = cur->next;
       //NOTE: We need a break up procedure to be more efficient
       //since this will be WAY more memory than is needed.
       return (void *)((char *) cur + FREE_LIST_SIZE);
     }
-    lg_size++;
+    index++;
   }
 
   // We allocate a little bit of extra memory so that we can store the
@@ -183,10 +217,8 @@ void my_free(void *ptr) {
   // that will allow it to be sufficient
   // for any future query of that size (2^k).
   // In other words, put in kth bin if
-  // 2^k < size <= 2^(k+1)
-  // NOTE: Do a power of two check here
-  // to prevent putting 2^k in k-1 bin.
-  size_t index = log_upper(size) - 1;
+  // 2^(k-1) < size <= 2^k
+  size_t index = log_upper(size);
   // Append to front of free list
   cur->next = freeListBins[index];
   freeListBins[index] = cur;
