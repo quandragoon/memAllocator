@@ -26,6 +26,7 @@
 #include <string.h>
 #include "./allocator_interface.h"
 #include "./memlib.h"
+#include <assert.h>
 
 // Don't call libc malloc!
 #define malloc(...) (USE_MY_MALLOC)
@@ -48,6 +49,7 @@
 
 // The size of a size_t in bits (approx).
 #define SIZE_T_SIZE (sizeof(size_t) * 3 + 4)
+// #define SIZE_T_SIZE sizeof(size_t)*8
 
 struct free_list {
   struct free_list* next;
@@ -58,7 +60,7 @@ typedef struct free_list Free_List;
 // The smallest aligned value that will hold the header for the free list.
 #define FREE_LIST_SIZE (ALIGN(sizeof(Free_List)))
 
-Free_List* freeListBins[SIZE_T_SIZE];
+Free_List* FreeList[SIZE_T_SIZE];
 
 // check - This checks our invariant that the size_t header before every
 // block points to either the beginning of the next block, or the end of the
@@ -88,9 +90,8 @@ int my_check() {
 // calls are made.  Since this is a very simple implementation, we just
 // return success.
 int my_init() {
-  for (int i = 0; i < SIZE_T_SIZE; i++) {
-    freeListBins[i] = NULL;
-  }
+  for(int i = 0; i < SIZE_T_SIZE; i++)
+    FreeList[i] = NULL;
   return 0;
 }
 
@@ -112,6 +113,25 @@ size_t log_upper(size_t val) {
   }
   return r;
 }
+
+
+// Split a power of 2 into multiple powers of 2.
+void split (Free_List* cur, size_t size, size_t index)
+{
+  Free_List* ptr = NULL;
+  size_t s = 1 << index;
+  while (index > 0 && size != index){
+    index--;
+    s >>= 1;
+    ptr = (Free_List*)((char*)cur + s);
+    ptr->size = s;
+    ptr->next = FreeList[index];
+    FreeList[index] = ptr;
+  }
+  cur->size = size;
+  return;
+}
+
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
@@ -119,29 +139,22 @@ void * my_malloc(size_t size) {
   // If bin is not null, we allocate
   size += FREE_LIST_SIZE;
   size_t aligned_size = ALIGN(size);
-  size_t lg_size = log_upper(size);
-  while (lg_size < SIZE_T_SIZE) {
-    // Find big enough de-allocated block
-    if (freeListBins[lg_size] != NULL) {
-      Free_List *cur = freeListBins[lg_size];
-      
-      if (cur->size - aligned_size > FREE_LIST_SIZE) {
-        cur->size = aligned_size;
-        Free_List* chunk = (Free_List *)((char *) cur + aligned_size);
-        // Since we allocate aligned sizes, the leftover chunk is also
-        // going to be aligned.
-        chunk->size = cur->size - aligned_size;
-        chunk->next = NULL;
-        void* ptr = (void *)((char *) chunk + FREE_LIST_SIZE);
-        my_free(ptr);
+  size_t lg_size = log_upper(aligned_size);
+  aligned_size = 1 << lg_size;
+
+  Free_List* cur = NULL;
+  for (size_t index = lg_size; index < SIZE_T_SIZE; index++){
+    if (FreeList[index]){
+      cur = FreeList[index];
+      FreeList[index] = cur->next;
+      cur->next = NULL;
+      if (index > lg_size){
+        split (cur, lg_size, index);
       }
-      freeListBins[lg_size] = cur->next;
-      //NOTE: We need a break up procedure to be more efficient
-      //since this will be WAY more memory than is needed.
-      return (void *)((char *) cur + FREE_LIST_SIZE);
+      return (void*)((char*)cur + FREE_LIST_SIZE);
     }
-    lg_size++;
   }
+    
 
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
@@ -174,11 +187,12 @@ void * my_malloc(size_t size) {
 
 // free - Freeing a block does nothing.
 void my_free(void *ptr) {
-  Free_List* cur = (Free_List*)((char *)ptr - FREE_LIST_SIZE); 
-  size_t size = cur->size;
-  // int s = (int) size;
-  // printf("Size of Freed: %d \n", s);
+  Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
+  size_t index = log_upper(cur->size);
+  cur->next = FreeList[index];
+  FreeList[index] = cur;
 
+  
   // Want to place freed block in a bin
   // that will allow it to be sufficient
   // for any future query of that size (2^k).
@@ -186,10 +200,8 @@ void my_free(void *ptr) {
   // 2^k < size <= 2^(k+1)
   // NOTE: Do a power of two check here
   // to prevent putting 2^k in k-1 bin.
-  size_t index = log_upper(size) - 1;
+  // assert((log_upper(size) > 0) && (log_upper(size) < SIZE_T_SIZE));
   // Append to front of free list
-  cur->next = freeListBins[index];
-  freeListBins[index] = cur;
 }
 
 // realloc - Implemented simply in terms of malloc and free
@@ -206,7 +218,7 @@ void * my_realloc(void *ptr, size_t size) {
   // where we stashed this in the FREE_LIST_SIZE bytes directly before the
   // address we returned.  Now we can back up by that many bytes and read
   // the size by pulling it from the free list header.
-  Free_List* mem = (Free_List*)((uint8_t*)ptr - FREE_LIST_SIZE);
+  Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
   copy_size = mem->size - FREE_LIST_SIZE;
 
   // If the new block is smaller than the old one, we have to stop copying
