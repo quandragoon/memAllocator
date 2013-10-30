@@ -78,7 +78,8 @@ int my_check() {
 
   p = lo;
   while (lo <= p && p < hi) {
-    size = ALIGN(*(size_t*)p + SIZE_T_SIZE);
+    Free_List *cur = (Free_List*)p;
+    size = ALIGN(cur->size);
     p += size;
   }
 
@@ -88,6 +89,16 @@ int my_check() {
     return -1;
   }
 
+  for (int i=0; i < SIZE_T_SIZE; i++) {
+    Free_List *this = FreeList[i];
+    while (this) {
+      if (this->size <= (1 << (i-1)) || this->size > (1 << i)) {
+        printf("You seriously suck. Bin %d had a fucked up node\n", i);
+        return -1;
+      }
+      this = this->next;
+    }
+  }
   return 0;
 }
 
@@ -108,6 +119,8 @@ int my_init() {
 
 /*
 size_t log_upper(size_t val) {
+  if (val == 0)
+    return 0;
   size_t next = val - 1;
   size_t r = 0;
   // since we have subtracted 1, the number of bits
@@ -169,6 +182,11 @@ static inline void chunk (Free_List* cur, size_t aligned_size){
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
+ /*
+  if (my_check() == -1) {
+    printf("Invariants failing in my_malloc\n");
+  }
+  */
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
