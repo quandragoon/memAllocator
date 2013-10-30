@@ -34,11 +34,11 @@
 #define realloc(...) (USE_MY_REALLOC)
 
 #ifndef MIN_SIZE
-#define MIN_SIZE 16
+#define MIN_SIZE 64
 #endif
 
 #ifndef MIN_DIFF
-#define MIN_DIFF 256
+#define MIN_DIFF 128
 #endif
 
 #ifndef MAX_DIFF
@@ -68,7 +68,7 @@
 struct free_list {
   struct free_list* next;
   size_t size;
-  // bool free;
+  // short free;
 };
 
 typedef struct free_list Free_List;
@@ -135,6 +135,7 @@ int my_init() {
 // and free are working.
 
 
+// borrowed from http://graphics.stanford.edu/~seander/bithacks.html#IntegerLog
 static inline size_t log_upper(size_t val) {
   const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
   const unsigned int S[] = {1, 2, 4, 8, 16};
@@ -182,6 +183,9 @@ static inline void chunk (Free_List* cur, size_t aligned_size){
 static inline size_t max (size_t x, size_t y){
   return (x > y) ? x : y;
 }
+static inline size_t min (size_t x, size_t y){
+  return (x < y) ? x : y;
+}
 
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
@@ -194,8 +198,7 @@ void * my_malloc(size_t size) {
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
-  /*
-  size += (FREE_LIST_SIZE + FOOTER_SIZE);
+  size += (FREE_LIST_SIZE);
   size_t aligned_size = max(ALIGN(size), MIN_SIZE);
   size_t lg_size = log_upper(aligned_size);
   size_t index = lg_size + 1;
@@ -213,10 +216,9 @@ void * my_malloc(size_t size) {
       FreeList[lg_size] = cur->next;
     else
       prev->next = cur->next;
-    cur->free = false;
+    // cur->free = 0;
     return (void*)((char*)cur + FREE_LIST_SIZE);
   }
-
 
   while (index < SIZE_T_SIZE){
     if (FreeList[index]){
@@ -228,13 +230,13 @@ void * my_malloc(size_t size) {
         chunk(c, aligned_size);
 
       FreeList[index] = c->next;
-      c->free = false;
+      // c->free = 0;
       return (void*)((char*)c + FREE_LIST_SIZE);
     }
     index++;
   }
-  */
 
+  /*
   size += FREE_LIST_SIZE;
   size_t aligned_size = max(ALIGN(size), ALIGN(MIN_SIZE));
   // size_t x = log_upper(aligned_size);
@@ -262,6 +264,7 @@ void * my_malloc(size_t size) {
       return (void*)((char*)cur + FREE_LIST_SIZE);
     }
   }
+  */
 
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
@@ -280,7 +283,7 @@ void * my_malloc(size_t size) {
     // We store the size of the block we've allocated in the first
     // FREE_LIST_SIZE bytes.
     ((Free_List*)p)->next = NULL;
-    // ((Free_List*)p)->free = false;
+    // ((Free_List*)p)->free = 0;
     ((Free_List*)p)->size = aligned_size;
     //TODO: set footer
 
@@ -298,9 +301,29 @@ void * my_malloc(size_t size) {
 void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
   size_t index = log_upper(cur->size);
-  cur->next = FreeList[index];
-  FreeList[index] = cur;
 
+  /*
+  Free_List* p = NULL;
+  Free_List* c = FreeList[index];
+
+  while(c && c->size > cur->size){
+    p = c;
+    c = c->next;
+  }
+
+  if (!p){
+    cur->next = c;
+    FreeList[index] = cur;
+  }
+  else{
+    cur->next = c;
+    p->next = cur;
+  }
+  */
+  
+  cur->next = FreeList[index];
+  // cur->free = 1;
+  FreeList[index] = cur;
   
   // Want to place freed block in a bin
   // that will allow it to be sufficient
@@ -325,21 +348,31 @@ void * my_realloc(void *ptr, size_t size) {
     my_free(ptr);
     return NULL;
   }
-  
+
+
   size_t aligned_size = ALIGN(size + FREE_LIST_SIZE);
   Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
-  copy_size = mem->size;
+  copy_size = min(mem->size - FREE_LIST_SIZE, ALIGN(size));
+
 
   // If the new block is smaller than the old one, we have to stop copying
   // early so that we don't write off the end of the new block of memory.
-  // if (aligned_size + MIN_DIFF < copy_size){
-  if (2*aligned_size <= copy_size){
+  if (aligned_size + MIN_DIFF < copy_size){
+  // if (2*aligned_size <= copy_size){
     chunk(mem, aligned_size);
     return ptr;
   }
 
   if (mem->size >= aligned_size)
     return ptr;
+
+  // for consecutive, increasing reallocs
+  if ((char*)mem + mem->size == my_heap_hi()+1)
+  {
+    mem_sbrk(aligned_size - mem->size);
+    mem->size = aligned_size;
+    return ptr;
+  }
 
   // Allocate a new chunk of memory, and fail if that allocation fails.
   newptr = my_malloc(size);
