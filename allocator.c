@@ -153,6 +153,8 @@ static inline size_t log_upper(size_t val) {
 
 
 // Split a power of 2 into multiple powers of 2.
+// Algorithm mentioned in lecture for fixed power of 2 binning.
+// Reference: Lecture 3 slides on bit hacks.
 static inline void split (Free_List* cur, size_t size, size_t index)
 {
   Free_List* ptr = NULL;
@@ -169,8 +171,11 @@ static inline void split (Free_List* cur, size_t size, size_t index)
   return;
 }
 
-// When binning by ranges, shaves off extra portion of chunk and frees it
+// When binning by ranges with variable size allocated blocks, 
+// shaves off extra portion of chunk and frees it
 // prior to allocating.
+// This is to allocate exactly what the user asked for and conserve
+// the extra in the free list bins.
 static inline void chunk (Free_List* cur, size_t aligned_size){
   Free_List* chunk = (Free_List*)((char*)cur + aligned_size);
   chunk->size = cur->size - aligned_size;
@@ -304,8 +309,12 @@ void coalesce_fwd(Free_List *first) {
     size_t bin = log_upper(next->size);
     Free_List *cur = FreeList[bin];
     Free_List *prev = NULL;
-    // iterate through bin list to remove
-    // 'next' from the free list!
+    // Iterate through bin list to remove
+    // 'next' from the free list.
+    // We want to remove it from the Free List
+    // to ensure that we do not allocate this 
+    // piece twice (since we plan on coalescing it
+    // into an allocated piece now).
     while (cur != next) {
       prev = cur;
       cur = cur->next;
@@ -319,7 +328,7 @@ void coalesce_fwd(Free_List *first) {
     else {
       FreeList[bin] = cur->next;
     }
-    // Effectively coalescing two pieces.
+    // Effectively coalescing two pieces into the first.
     first->size += cur->size; 
   }
 }
@@ -349,35 +358,48 @@ void * my_realloc(void *ptr, size_t size) {
     my_free(ptr);
     return NULL;
   }
+
   
+  // The full block size that is returned will need to be
+  // of aligned_size.
   size_t aligned_size = ALIGN(size + FREE_LIST_SIZE);
+  // Here is the header we are working with.
   Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
+  // The size we want to copy.
+  copy_size = mem->size - FREE_LIST_SIZE;
 
   // Attempt to coalesce
   while (mem->size < aligned_size) {
+    // Save the size before coalescing
     size_t before = mem->size;
     coalesce_fwd(mem);
-    // do a check to see if coalesce actually found something.
+    // Do a check to see if coalesce actually found something.
     // mem->size will be modified by the coalesced amount if
-    // we find a free block.
+    // we find a free block so before != mem->size if we 
+    // coalesced.
     if (mem->size == before) {
       break;
     }
   }
 
-  // New and possibly coalesced size of mem
-  copy_size = mem->size;
+  // New and possibly coalesced size of mem.
+  size_t new_size = mem->size;
 
-  // If the new block is smaller than the old one, we have to stop copying
-  // early so that we don't write off the end of the new block of memory.
-  if (aligned_size + MIN_DIFF < copy_size){
-  // if (2*aligned_size <= copy_size){
+  // If the new block is smaller than the old one, we can kill
+  // the process all together, returning the ptr back to the user.
+  // In some cases, we can shave off a chunk at the end so that we 
+  // don't waste free space by allocating it unnecessarily.
+  // The MIN_DIFF is the tuned variable heuristic that accounts for this.
+  if (aligned_size + MIN_DIFF < new_size){
+  // if (2*aligned_size <= new_size){
   // split(mem);
     chunk(mem, aligned_size);
     return ptr;
   }
 
-  if (mem->size >= aligned_size)
+  // Didn't shave off chunk, but still should return ptr
+  // since new block smaller than old one.
+  if (new_size >= aligned_size)
     return ptr;
 
   // Allocate a new chunk of memory, and fail if that allocation fails.
@@ -391,7 +413,8 @@ void * my_realloc(void *ptr, size_t size) {
   // the size by pulling it from the free list header.
 
   // This is a standard library call that performs a simple memory copy.
-  memcpy(newptr, ptr, copy_size - FREE_LIST_SIZE);
+  // We only want to copy the original size of mem so that's why we saved it.
+  memcpy(newptr, ptr, copy_size);
 
   // Release the old block.
   my_free(ptr);
