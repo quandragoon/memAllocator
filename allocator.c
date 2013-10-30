@@ -67,6 +67,7 @@
 
 struct free_list {
   struct free_list* next;
+  struct free_list* back;
   size_t size;
   unsigned int free : 1;
 };
@@ -212,9 +213,14 @@ void * my_malloc(size_t size) {
       FreeList[lg_size] = cur->next;
     else
       prev->next = cur->next;
+    if (cur->next)
+      cur->next->back = prev;
 
     // set to free flag to false
     cur->free = 0;
+    // for ease of debugging also clear others
+    cur->next = NULL;
+    cur->back = NULL;
     return (void*)((char*)cur + FREE_LIST_SIZE);
   }
 
@@ -229,8 +235,13 @@ void * my_malloc(size_t size) {
         chunk(c, aligned_size);
 
       FreeList[index] = c->next;
+      if (c->next)
+        c->next->back = NULL;
       // set free flag to false before returning
       c->free = 0;
+      // clear other stuff for debugging
+      c->next = NULL;
+      c->back = NULL;
       return (void*)((char*)c + FREE_LIST_SIZE);
     }
     index++;
@@ -283,6 +294,7 @@ void * my_malloc(size_t size) {
     // We store the size of the block we've allocated in the first
     // FREE_LIST_SIZE bytes.
     ((Free_List*)p)->next = NULL;
+    ((Free_List*)p)->back = NULL;
     ((Free_List*)p)->free = 0;
     ((Free_List*)p)->size = aligned_size;
     //TODO: set footer
@@ -297,29 +309,34 @@ void * my_malloc(size_t size) {
   }
 }
 
+// Takes a free list pointer and checks whether it can be 
+// combined (coalesced) with the next contiguous block.
+// TODO: Can be optimized with reverse list pointers,
+// so traversal of linked lists is fast.
 void coalesce_fwd(Free_List *first) {
-  // Need to do a boundary check here
+  // Need to do a heap boundary check here
   char *boundary = (char*)mem_heap_hi() + 1;
+  // If this is the last block in allocated mem, we return.
   if (boundary == ((char*) first + first->size) ) {
     return;
   }
-  Free_List *next = (Free_List*)((char*) first + first->size);
+  Free_List *find = (Free_List*)((char*) first + first->size);
   // do ops if only the next contiguous block is free.
-  if (next->free) {
-    size_t bin = log_upper(next->size);
+  if (find->free) {
+    size_t bin = log_upper(find->size);
     Free_List *cur = FreeList[bin];
     Free_List *prev = NULL;
     // Iterate through bin list to remove
-    // 'next' from the free list.
+    // 'find' from the free list.
     // We want to remove it from the Free List
     // to ensure that we do not allocate this 
     // piece twice (since we plan on coalescing it
     // into an allocated piece now).
-    while (cur != next) {
-      prev = cur;
-      cur = cur->next;
+    while (cur != find) {
       // should be able to find item
       assert (cur != NULL);
+      prev = cur;
+      cur = cur->next;
     }
     // edge case if prev is NULL
     if (prev) {
@@ -329,7 +346,8 @@ void coalesce_fwd(Free_List *first) {
       FreeList[bin] = cur->next;
     }
     // Effectively coalescing two pieces into the first.
-    first->size += cur->size; 
+    find->free = 0;
+    first->size += find->size; 
   }
 }
 
@@ -339,9 +357,14 @@ void coalesce_fwd(Free_List *first) {
 // Places size in bin k such that 2^(k-1) < size <= 2^k.
 void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
+  //coalesce_fwd(cur);
   size_t index = log_upper(cur->size);
   cur->next = FreeList[index];
+  if (cur->next) {
+    cur->next->back = cur;
+  }
   FreeList[index] = cur;
+  cur->back = NULL;
   // set free flag to true.
   cur->free = 1;
 }
