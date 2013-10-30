@@ -33,8 +33,17 @@
 #define free(...) (USE_MY_FREE)
 #define realloc(...) (USE_MY_REALLOC)
 
-#define MIN_DIFF 512
-#define MAX_DIFF 1024
+#ifndef MIN_SIZE
+#define MIN_SIZE 16
+#endif
+
+#ifndef MIN_DIFF
+#define MIN_DIFF 256
+#endif
+
+#ifndef MAX_DIFF
+#define MAX_DIFF 512
+#endif
 
 // #define MIN_BLOCK_SIZE 4
 
@@ -59,11 +68,19 @@
 struct free_list {
   struct free_list* next;
   size_t size;
+  // bool free;
 };
 
 typedef struct free_list Free_List;
+
+struct footer {
+  size_t size;
+  // Free_List* next; 
+};
+typedef struct footer Footer;
 // The smallest aligned value that will hold the header for the free list.
 #define FREE_LIST_SIZE (ALIGN(sizeof(Free_List)))
+#define FOOTER_SIZE (ALIGN(sizeof(Footer)))
 
 Free_List* FreeList[SIZE_T_SIZE];
 
@@ -117,25 +134,8 @@ int my_init() {
 // version is just a placeholder until malloc
 // and free are working.
 
-/*
-size_t log_upper(size_t val) {
-  if (val == 0)
-    return 0;
-  size_t next = val - 1;
-  size_t r = 0;
-  // since we have subtracted 1, the number of bits
-  // upto most significant 1.
-  // val = 10000 -> next = 1111 -> r = 4
-  // val = 11010 -> next = 11001 -> r = 5
-  while (next) {
-    r++;
-    next >>= 1;
-  }
-  return r;
-}
-*/
 
-size_t log_upper(size_t val) {
+static inline size_t log_upper(size_t val) {
   const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
   const unsigned int S[] = {1, 2, 4, 8, 16};
 
@@ -154,7 +154,7 @@ size_t log_upper(size_t val) {
 } 
 
 // Split a power of 2 into multiple powers of 2.
-void split (Free_List* cur, size_t size, size_t index)
+static inline void split (Free_List* cur, size_t size, size_t index)
 {
   Free_List* ptr = NULL;
   size_t s = 1 << index;
@@ -179,6 +179,10 @@ static inline void chunk (Free_List* cur, size_t aligned_size){
   my_free(ptr);
 }
 
+static inline size_t max (size_t x, size_t y){
+  return (x > y) ? x : y;
+}
+
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
@@ -190,8 +194,9 @@ void * my_malloc(size_t size) {
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
-  size += FREE_LIST_SIZE;
-  size_t aligned_size = ALIGN(size);
+  /*
+  size += (FREE_LIST_SIZE + FOOTER_SIZE);
+  size_t aligned_size = max(ALIGN(size), MIN_SIZE);
   size_t lg_size = log_upper(aligned_size);
   size_t index = lg_size + 1;
 
@@ -208,6 +213,7 @@ void * my_malloc(size_t size) {
       FreeList[lg_size] = cur->next;
     else
       prev->next = cur->next;
+    cur->free = false;
     return (void*)((char*)cur + FREE_LIST_SIZE);
   }
 
@@ -222,13 +228,15 @@ void * my_malloc(size_t size) {
         chunk(c, aligned_size);
 
       FreeList[index] = c->next;
+      c->free = false;
       return (void*)((char*)c + FREE_LIST_SIZE);
     }
     index++;
   }
-  /*
+  */
+
   size += FREE_LIST_SIZE;
-  size_t aligned_size = ALIGN(size);
+  size_t aligned_size = max(ALIGN(size), ALIGN(MIN_SIZE));
   // size_t x = log_upper(aligned_size);
   // size_t lg_size = x ^ ((x ^ MIN_BLOCK_SIZE) & -(x < MIN_BLOCK_SIZE));
   size_t lg_size = log_upper(aligned_size);
@@ -244,15 +252,16 @@ void * my_malloc(size_t size) {
   for (size_t index = lg_size; index < SIZE_T_SIZE; index++){
     if (FreeList[index]){
       cur = FreeList[index];
+      if (cur->size - aligned_size > MAX_DIFF)
+        break;
       FreeList[index] = cur->next;
       cur->next = NULL;
-      if (index > lg_size){
+      if (index > lg_size + 1){
         split (cur, lg_size, index);
       }
       return (void*)((char*)cur + FREE_LIST_SIZE);
     }
   }
-  */
 
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
@@ -271,7 +280,9 @@ void * my_malloc(size_t size) {
     // We store the size of the block we've allocated in the first
     // FREE_LIST_SIZE bytes.
     ((Free_List*)p)->next = NULL;
+    // ((Free_List*)p)->free = false;
     ((Free_List*)p)->size = aligned_size;
+    //TODO: set footer
 
     // Then, we return a pointer to the rest of the block of memory,
     // which is at least size bytes long.  We have to cast to uint8_t
@@ -321,7 +332,8 @@ void * my_realloc(void *ptr, size_t size) {
 
   // If the new block is smaller than the old one, we have to stop copying
   // early so that we don't write off the end of the new block of memory.
-  if (aligned_size + MIN_DIFF < copy_size){
+  // if (aligned_size + MIN_DIFF < copy_size){
+  if (2*aligned_size <= copy_size){
     chunk(mem, aligned_size);
     return ptr;
   }
