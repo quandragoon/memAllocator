@@ -102,6 +102,8 @@ int my_init() {
 // Much faster than current version but current
 // version is just a placeholder until malloc
 // and free are working.
+
+/*
 size_t log_upper(size_t val) {
   size_t next = val - 1;
   size_t r = 0;
@@ -115,7 +117,25 @@ size_t log_upper(size_t val) {
   }
   return r;
 }
+*/
 
+size_t log_upper(size_t val) {
+  const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
+  const unsigned int S[] = {1, 2, 4, 8, 16};
+
+  val--;
+
+  size_t r = 0; // result of log2(v) will go here
+  for (int i = 4; i >= 0; i--) // unroll for speed...
+  {
+    if (val & b[i])
+      {
+        val >>= S[i];
+        r |= S[i];
+      } 
+  }
+  return r+1;
+} 
 
 // Split a power of 2 into multiple powers of 2.
 void split (Free_List* cur, size_t size, size_t index)
