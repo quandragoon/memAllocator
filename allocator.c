@@ -33,6 +33,8 @@
 #define free(...) (USE_MY_FREE)
 #define realloc(...) (USE_MY_REALLOC)
 
+// #define MIN_BLOCK_SIZE 4
+
 // All blocks must have a specified minimum alignment.
 // The alignment requirement (from config.h) is >= 8 bytes.
 #ifndef ALIGNMENT
@@ -139,10 +141,18 @@ void * my_malloc(size_t size) {
   // If bin is not null, we allocate
   size += FREE_LIST_SIZE;
   size_t aligned_size = ALIGN(size);
+  // size_t x = log_upper(aligned_size);
+  // size_t lg_size = x ^ ((x ^ MIN_BLOCK_SIZE) & -(x < MIN_BLOCK_SIZE));
   size_t lg_size = log_upper(aligned_size);
   aligned_size = 1 << lg_size;
 
   Free_List* cur = NULL;
+  if (FreeList[lg_size]){
+    cur = FreeList[lg_size];
+    FreeList[lg_size] = cur->next;
+    return (void*)((char*)cur + FREE_LIST_SIZE);
+  }
+
   for (size_t index = lg_size; index < SIZE_T_SIZE; index++){
     if (FreeList[index]){
       cur = FreeList[index];
@@ -154,7 +164,6 @@ void * my_malloc(size_t size) {
       return (void*)((char*)cur + FREE_LIST_SIZE);
     }
   }
-    
 
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
@@ -209,6 +218,18 @@ void * my_realloc(void *ptr, size_t size) {
   void *newptr;
   size_t copy_size;
 
+  if (size == 0){
+    my_free(ptr);
+    return NULL;
+  }
+
+  if(!ptr)
+    return my_malloc(size);
+
+  Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
+  if (mem->size >= size + FREE_LIST_SIZE)
+    return ptr;
+
   // Allocate a new chunk of memory, and fail if that allocation fails.
   newptr = my_malloc(size);
   if (NULL == newptr)
@@ -218,7 +239,6 @@ void * my_realloc(void *ptr, size_t size) {
   // where we stashed this in the FREE_LIST_SIZE bytes directly before the
   // address we returned.  Now we can back up by that many bytes and read
   // the size by pulling it from the free list header.
-  Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
   copy_size = mem->size - FREE_LIST_SIZE;
 
   // If the new block is smaller than the old one, we have to stop copying
