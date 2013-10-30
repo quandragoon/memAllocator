@@ -49,8 +49,8 @@ typedef struct range_t {
 // we create a range struct for this block and add it to the range list.
 static int add_range(const malloc_impl_t *impl, range_t **ranges, char *lo,
     int size, int tracenum, int opnum) {
-  char *hi = lo + size - 1;
-  //  range_t *p = NULL;
+    char *hi = lo + size - 1;
+    range_t *p = NULL;
 
   // You can use this as a buffer for writing messages with sprintf.
   // char msg[MAXLINE];
@@ -63,33 +63,53 @@ static int add_range(const malloc_impl_t *impl, range_t **ranges, char *lo,
 
   // The payload must lie within the extent of the heap
   // TODO(project3): YOUR CODE HERE
-  assert(lo >= (char*)mem_heap_lo()) 
+  assert(lo >= (char*)mem_heap_lo());
   assert(hi <= (char*)mem_heap_hi());
 
   // The payload must not overlap any other payloads
   // TODO(project3): YOUR CODE HERE
-  range_t *cur = *ranges;
-  while (cur) {
-    assert(lo > cur->hi || hi < cur->lo);
-    cur = cur->next;
-  }
+  assert(lo < hi);
+  for (p = *ranges; p; p = p->next){
+    assert((lo > p->hi) || (hi < p->lo));
+  } 
 
   // Everything looks OK, so remember the extent of this block by creating a
   // range struct and adding it the range list.
   // TODO(project3):  YOUR CODE HERE
+  range_t* new_p = (range_t*)malloc(sizeof(range_t));
+  new_p->lo = lo;
+  new_p->hi = hi;
+  new_p->next = *ranges;
+  *ranges = new_p;
+  assert((*ranges)->lo == lo);
+  assert((*ranges)->hi == hi);
 
   return 1;
 }
 
 // remove_range - Free the range record of block whose payload starts at lo
 static void remove_range(range_t **ranges, char *lo) {
-  //  range_t *p = NULL;
-  //  range_t **prevpp = ranges;
+  // range_t *p = NULL;
+  // range_t **prevpp = ranges;
+  range_t *p = *ranges;
+  range_t *prevpp = NULL;
+
 
   // Iterate the linked list until you find the range with a matching lo
   // payload and remove it.  Remember to properly handle the case where the
   // payload is in the first node, and to free the node after unlinking it.
   // TODO(project3): YOUR CODE HERE
+  for (range_t* pnext = (*ranges)->next; p; p = p->next, pnext = p->next){
+    if(p->lo == lo){
+      if(!prevpp)
+        *ranges = pnext;
+      else
+        prevpp->next = pnext;
+      free(p);
+      break;
+    }
+    prevpp = p;
+  }
 }
 
 // clear_ranges - free all of the range records for a trace
