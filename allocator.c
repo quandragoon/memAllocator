@@ -26,6 +26,7 @@
 #include <string.h>
 #include "./allocator_interface.h"
 #include "./memlib.h"
+#include <assert.h>
 
 // Don't call libc malloc!
 #define malloc(...) (USE_MY_MALLOC)
@@ -105,6 +106,23 @@ int my_init() {
   return 0;
 }
 
+// Returns the upper bound of the log in O(lg N) for N-bit num.
+// Bit hack attained from Bit Twiddling Hacks page.
+size_t upper_bound_log(size_t val) {
+  const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
+  const unsigned int S[] = {1, 2, 4, 8, 16};
+  size_t r = 0;
+  // Necessary constraint on argument.
+  assert (val > 0);
+  val--;
+  for (int i = 4; i >= 0; i--) {
+    if (val & b[i]) {
+      val >>= S[i];
+      r |= S[i];
+    }
+  }
+  return r+1;
+}
 // There is a bit hack to do this in lg N ops where
 // N is the number of bits of val (lglg(val)).
 // Much faster than current version but current
@@ -128,14 +146,13 @@ size_t log_upper(size_t val) {
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
-  if (my_check() == -1) {
-    printf("Invariants failing in my_malloc\n");
-  }
+  assert (my_check() != -1);
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
   size += FREE_LIST_SIZE;
   size_t aligned_size = ALIGN(size);
-  size_t lg_size = log_upper(aligned_size);
+  size_t lg_size = upper_bound_log(aligned_size);
+  assert (log_upper(aligned_size) == upper_bound_log(aligned_size));
   Free_List *cur = freeListBins[lg_size];
    
   Free_List *prev = NULL;
@@ -218,7 +235,7 @@ void my_free(void *ptr) {
   // for any future query of that size (2^k).
   // In other words, put in kth bin if
   // 2^(k-1) < size <= 2^k
-  size_t index = log_upper(size);
+  size_t index = upper_bound_log(size);
   // Append to front of free list
   cur->next = freeListBins[index];
   freeListBins[index] = cur;
@@ -228,26 +245,32 @@ void my_free(void *ptr) {
 void * my_realloc(void *ptr, size_t size) {
   void *newptr;
   size_t copy_size;
+  
+  size_t aligned_size = ALIGN(size + FREE_LIST_SIZE);
+  // Get the size of the old block of memory.  Take a peek at my_malloc(),
+  // where we stashed this in the FREE_LIST_SIZE bytes directly before the
+  // address we returned.  Now we can back up by that many bytes and read
+  // the size by pulling it from the free list header.
+  Free_List* mem = (Free_List*)((uint8_t*)ptr - FREE_LIST_SIZE);
+  copy_size = mem->size;
+  // If the new block is smaller than the old one, we don't need to copy.
+  // Just return original pointer and shave off the end.
+  if (aligned_size < copy_size) {
+    Free_List* extra = (Free_List*)((uint8_t*)mem + aligned_size);
+    extra->size = copy_size - aligned_size;
+    extra->next = NULL;
+    my_free(extra);
+    mem->size = aligned_size;
+    return ptr;
+  }
 
   // Allocate a new chunk of memory, and fail if that allocation fails.
   newptr = my_malloc(size);
   if (NULL == newptr)
     return NULL;
 
-  // Get the size of the old block of memory.  Take a peek at my_malloc(),
-  // where we stashed this in the FREE_LIST_SIZE bytes directly before the
-  // address we returned.  Now we can back up by that many bytes and read
-  // the size by pulling it from the free list header.
-  Free_List* mem = (Free_List*)((uint8_t*)ptr - FREE_LIST_SIZE);
-  copy_size = mem->size - FREE_LIST_SIZE;
-
-  // If the new block is smaller than the old one, we have to stop copying
-  // early so that we don't write off the end of the new block of memory.
-  if (size < copy_size)
-    copy_size = size;
-
   // This is a standard library call that performs a simple memory copy.
-  memcpy(newptr, ptr, copy_size);
+  memcpy(newptr, ptr, copy_size - FREE_LIST_SIZE);
 
   // Release the old block.
   my_free(ptr);
