@@ -63,10 +63,16 @@ static int add_range(const malloc_impl_t *impl, range_t **ranges, char *lo,
 
   // The payload must lie within the extent of the heap
   // TODO(project3): YOUR CODE HERE
-  assert(lo >= mem_heap_lo() && hi <= mem_heap_hi());
+  assert(lo >= (char*)mem_heap_lo()) 
+  assert(hi <= (char*)mem_heap_hi());
 
   // The payload must not overlap any other payloads
   // TODO(project3): YOUR CODE HERE
+  range_t *cur = *ranges;
+  while (cur) {
+    assert(lo > cur->hi || hi < cur->lo);
+    cur = cur->next;
+  }
 
   // Everything looks OK, so remember the extent of this block by creating a
   // range struct and adding it the range list.
