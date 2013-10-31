@@ -390,11 +390,10 @@ void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
   size_t index = log_upper(cur->size);
 
-  /*
   Free_List* p = NULL;
   Free_List* c = FreeList[index];
 
-  while(c && c->size > cur->size){
+  while(c && c->size < cur->size){
     p = c;
     c = c->next;
   }
@@ -407,12 +406,12 @@ void my_free(void *ptr) {
     cur->next = c;
     p->next = cur;
   }
-  */
   
+ /*
   cur->next = FreeList[index];
   // cur->free = 1;
   FreeList[index] = cur;
-  
+  */
   // Want to place freed block in a bin
   // that will allow it to be sufficient
   // for any future query of that size (2^k).
@@ -441,7 +440,7 @@ void * my_realloc(void *ptr, size_t size) {
   size_t aligned_size = ALIGN(size + FREE_LIST_SIZE);
   // Here is the header we are working with.
   Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
-  copy_size = min(mem->size - FREE_LIST_SIZE, ALIGN(size));
+  copy_size = min(mem->size, aligned_size) - FREE_LIST_SIZE;
 
 
   // If the new block is smaller than the old one, we have to stop copying
@@ -456,7 +455,7 @@ void * my_realloc(void *ptr, size_t size) {
   // since new block smaller than old one.
   if (mem->size >= aligned_size)
     return ptr;
-
+  
   // for consecutive, increasing reallocs
   if ((char*)mem + mem->size == my_heap_hi()+1)
   {
@@ -464,7 +463,7 @@ void * my_realloc(void *ptr, size_t size) {
     mem->size = aligned_size;
     return ptr;
   }
-
+  
   // Allocate a new chunk of memory, and fail if that allocation fails.
   newptr = my_malloc(size);
   if (NULL == newptr)

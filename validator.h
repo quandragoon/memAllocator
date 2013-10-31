@@ -167,9 +167,13 @@ int eval_mm_valid(const malloc_impl_t *impl, trace_t *trace, int tracenum) {
         // Fill the allocated region with some unique data that you can check
         // for if the region is copied via realloc.
         // TODO(project3): YOUR CODE HERE
+        /*
         for (size_t *writePointer = (size_t*)p; writePointer < (size_t*)((char*)p+size); writePointer++){
           *writePointer = (size_t)((char*)writePointer-p);
         }
+        */
+        assert(p != NULL);
+        memset(p, 0xAA, size);
         // Remember region
         trace->blocks[index] = p;
         trace->block_sizes[index] = size;
@@ -199,12 +203,13 @@ int eval_mm_valid(const malloc_impl_t *impl, trace_t *trace, int tracenum) {
           oldsize = size;
         // TODO(project3): YOUR CODE HERE
 
-        for(size_t *writePointer = (size_t*)oldp; writePointer < (size_t*)((char*)oldp+oldsize); writePointer++){
-          assert(*writePointer == (size_t)((char*)writePointer-oldp));
+        for (int i=0; i < oldsize; i++) {
+          if (*(newp + i) != (char)(0xAA)) {
+            malloc_error(tracenum, i, "content in newly located block is fucked up.");
+            return 0;
+          }
         }
-        for(size_t *writePointer = (size_t*)newp; writePointer < (size_t*)((char*)newp+size); writePointer++){
-          *writePointer = (size_t)((char*)writePointer-newp);
-        }
+        memset(newp, 0xAA, size);
 
         // Remember region
         trace->blocks[index] = newp;
