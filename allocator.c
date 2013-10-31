@@ -67,7 +67,6 @@
 
 struct free_list {
   struct free_list* next;
-  struct free_list* back;
   size_t size;
   unsigned int free : 1;
 };
@@ -113,6 +112,9 @@ int my_check() {
       if (this->size <= (1 << (i-1)) || this->size > (1 << i)) {
         printf("You seriously suck. Bin %d had a fucked up node\n", i);
         return -1;
+      }
+      if (!this->free) {
+        printf("There is something in Bin %d that does not have a free bit set.\n", i);
       }
       this = this->next;
     }
@@ -213,14 +215,11 @@ void * my_malloc(size_t size) {
       FreeList[lg_size] = cur->next;
     else
       prev->next = cur->next;
-    if (cur->next)
-      cur->next->back = prev;
 
     // set to free flag to false
     cur->free = 0;
     // for ease of debugging also clear others
     cur->next = NULL;
-    cur->back = NULL;
     return (void*)((char*)cur + FREE_LIST_SIZE);
   }
 
@@ -235,13 +234,10 @@ void * my_malloc(size_t size) {
         chunk(c, aligned_size);
 
       FreeList[index] = c->next;
-      if (c->next)
-        c->next->back = NULL;
       // set free flag to false before returning
       c->free = 0;
       // clear other stuff for debugging
       c->next = NULL;
-      c->back = NULL;
       return (void*)((char*)c + FREE_LIST_SIZE);
     }
     index++;
@@ -294,7 +290,6 @@ void * my_malloc(size_t size) {
     // We store the size of the block we've allocated in the first
     // FREE_LIST_SIZE bytes.
     ((Free_List*)p)->next = NULL;
-    ((Free_List*)p)->back = NULL;
     ((Free_List*)p)->free = 0;
     ((Free_List*)p)->size = aligned_size;
     //TODO: set footer
@@ -315,6 +310,7 @@ void * my_malloc(size_t size) {
 // so traversal of linked lists is fast.
 void coalesce_fwd(Free_List *first) {
   // Need to do a heap boundary check here
+  assert (my_check() == 0);
   char *boundary = (char*)mem_heap_hi() + 1;
   // If this is the last block in allocated mem, we return.
   if (boundary == ((char*) first + first->size) ) {
@@ -349,6 +345,7 @@ void coalesce_fwd(Free_List *first) {
     find->free = 0;
     first->size += find->size; 
   }
+  assert (my_check() == 0);
 }
 
 // free - Find the appropriate bin for a freed
@@ -357,14 +354,10 @@ void coalesce_fwd(Free_List *first) {
 // Places size in bin k such that 2^(k-1) < size <= 2^k.
 void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
-  //coalesce_fwd(cur);
+  coalesce_fwd(cur);
   size_t index = log_upper(cur->size);
   cur->next = FreeList[index];
-  if (cur->next) {
-    cur->next->back = cur;
-  }
   FreeList[index] = cur;
-  cur->back = NULL;
   // set free flag to true.
   cur->free = 1;
 }
