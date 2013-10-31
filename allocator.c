@@ -128,6 +128,23 @@ int my_init() {
   return 0;
 }
 
+// Returns the upper bound of the log in O(lg N) for N-bit num.
+// Bit hack attained from Bit Twiddling Hacks page.
+static inline size_t log_upper(size_t val) {
+  const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
+  const unsigned int S[] = {1, 2, 4, 8, 16};
+  size_t r = 0;
+  // Necessary constraint on argument.
+  assert (val > 0);
+  val--;
+  for (int i = 4; i >= 0; i--) {
+    if (val & b[i]) {
+      val >>= S[i];
+      r |= S[i];
+    }
+  }
+  return r+1;
+}
 // There is a bit hack to do this in lg N ops where
 // N is the number of bits of val (lglg(val)).
 // Much faster than current version but current
@@ -135,26 +152,9 @@ int my_init() {
 // and free are working.
 
 
-// borrowed from http://graphics.stanford.edu/~seander/bithacks.html#IntegerLog
-static inline size_t log_upper(size_t val) {
-  const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
-  const unsigned int S[] = {1, 2, 4, 8, 16};
-
-  val--;
-
-  size_t r = 0; // result of log2(v) will go here
-  for (int i = 4; i >= 0; i--) // unroll for speed...
-  {
-    if (val & b[i])
-      {
-        val >>= S[i];
-        r |= S[i];
-      } 
-  }
-  return r+1;
-} 
-
 // Split a power of 2 into multiple powers of 2.
+// Algorithm mentioned in lecture for fixed power of 2 binning.
+// Reference: Lecture 3 slides on bit hacks.
 static inline void split (Free_List* cur, size_t size, size_t index)
 {
   Free_List* ptr = NULL;
@@ -171,11 +171,15 @@ static inline void split (Free_List* cur, size_t size, size_t index)
   return;
 }
 
+// When binning by ranges with variable size allocated blocks, 
+// shaves off extra portion of chunk and frees it
+// prior to allocating.
+// This is to allocate exactly what the user asked for and conserve
+// the extra in the free list bins.
 static inline void chunk (Free_List* cur, size_t aligned_size){
   Free_List* chunk = (Free_List*)((char*)cur + aligned_size);
   chunk->size = cur->size - aligned_size;
   cur->size = aligned_size;
-  chunk->next = NULL;
   void* ptr = (void*)((char*)chunk + FREE_LIST_SIZE);
   my_free(ptr);
 }
@@ -190,15 +194,10 @@ static inline size_t min (size_t x, size_t y){
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
- /*
-  if (my_check() == -1) {
-    printf("Invariants failing in my_malloc\n");
-  }
-  */
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
-  size += (FREE_LIST_SIZE);
+  size += FREE_LIST_SIZE;
   size_t aligned_size = max(ALIGN(size), MIN_SIZE);
   size_t lg_size = log_upper(aligned_size);
   size_t index = lg_size + 1;
@@ -297,9 +296,57 @@ void * my_malloc(size_t size) {
   }
 }
 
-// free - Freeing a block does nothing.
+/*
+// Takes a free list pointer and checks whether it can be 
+// combined (coalesced) with the next contiguous block.
+// TODO: Can be optimized with reverse list pointers,
+// so traversal of linked lists is fast.
+void coalesce_fwd(Free_List *first) {
+  // Need to do a heap boundary check here
+  char *boundary = (char*)mem_heap_hi() + 1;
+  // If this is the last block in allocated mem, we return.
+  if (boundary == ((char*) first + first->size) ) {
+    return;
+  }
+  Free_List *find = (Free_List*)((char*) first + first->size);
+  // do ops if only the next contiguous block is free.
+  if (find->free) {
+    size_t bin = log_upper(find->size);
+    Free_List *cur = FreeList[bin];
+    Free_List *prev = NULL;
+    // Iterate through bin list to remove
+    // 'find' from the free list.
+    // We want to remove it from the Free List
+    // to ensure that we do not allocate this 
+    // piece twice (since we plan on coalescing it
+    // into an allocated piece now).
+    while (cur != find) {
+      // should be able to find item
+      assert (cur != NULL);
+      prev = cur;
+      cur = cur->next;
+    }
+    // edge case if prev is NULL
+    if (prev) {
+      prev->next = cur->next;
+    }
+    else {
+      FreeList[bin] = cur->next;
+    }
+    // Effectively coalescing two pieces into the first.
+    find->free = 0;
+    first->size += find->size; 
+  }
+}
+*/
+
+// free - Find the appropriate bin for a freed
+// element by accessing its header and finding
+// its size.
+// Places size in bin k such that 2^(k-1) < size <= 2^k.
 void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
+  //coalesce_fwd(cur);
   size_t index = log_upper(cur->size);
 
   /*
@@ -351,6 +398,7 @@ void * my_realloc(void *ptr, size_t size) {
 
 
   size_t aligned_size = ALIGN(size + FREE_LIST_SIZE);
+  // Here is the header we are working with.
   Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
   copy_size = min(mem->size - FREE_LIST_SIZE, ALIGN(size));
 
@@ -363,6 +411,8 @@ void * my_realloc(void *ptr, size_t size) {
     return ptr;
   }
 
+  // Didn't shave off chunk, but still should return ptr
+  // since new block smaller than old one.
   if (mem->size >= aligned_size)
     return ptr;
 
@@ -385,7 +435,8 @@ void * my_realloc(void *ptr, size_t size) {
   // the size by pulling it from the free list header.
 
   // This is a standard library call that performs a simple memory copy.
-  memcpy(newptr, ptr, copy_size - FREE_LIST_SIZE);
+  // We only want to copy the original size of mem so that's why we saved it.
+  memcpy(newptr, ptr, copy_size);
 
   // Release the old block.
   my_free(ptr);
