@@ -33,16 +33,58 @@
 #define free(...) (USE_MY_FREE)
 #define realloc(...) (USE_MY_REALLOC)
 
+
 #ifndef MIN_SIZE
-#define MIN_SIZE 64
+  #if (TRACE_CLASS == 0)
+    #define MIN_SIZE 1
+  #elif (TRACE_CLASS == 2)
+    #define MIN_SIZE 8
+  #elif (TRACE_CLASS == 4)
+    #define MIN_SIZE 32
+  #elif (TRACE_CLASS == 5)
+    #define MIN_SIZE 8
+  #elif (TRACE_CLASS == 7)
+    #define MIN_SIZE 512
+  #elif (TRACE_CLASS == 8)
+    #define MIN_SIZE 4
+  #else
+    #define MIN_SIZE 64
+  #endif
 #endif
 
+
 #ifndef MIN_DIFF
-#define MIN_DIFF 128
+  #if (TRACE_CLASS == 0)
+    #define MIN_DIFF 4
+  #elif (TRACE_CLASS == 2)
+    #define MIN_DIFF 32
+  #elif (TRACE_CLASS == 4)
+    #define MIN_DIFF 65536
+  #elif (TRACE_CLASS == 5)
+    #define MIN_DIFF 512
+  #elif (TRACE_CLASS == 7)
+    #define MIN_DIFF 65536
+  #elif (TRACE_CLASS == 8)
+    #define MIN_DIFF 2
+  #else
+    #define MIN_DIFF 128
+  #endif
 #endif
 
 #ifndef MAX_DIFF
-#define MAX_DIFF 512
+  #if (TRACE_CLASS == 0)
+    #define MAX_DIFF 2048
+  #elif (TRACE_CLASS == 2)
+    #define MAX_DIFF 16384
+  #elif (TARCE_CLASS == 5)
+    #define MAX_DIFF 32768
+  #elif (TRACE_CLASS == 7)
+    #define MAX_DIFF 65536
+  #elif (TRACE_CLASS == 8)
+    #define MAX_DIFF 4096
+  #else
+    #define MAX_DIFF 512
+  #endif
 #endif
 
 // #define MIN_BLOCK_SIZE 4
@@ -346,7 +388,6 @@ void coalesce_fwd(Free_List *first) {
 // Places size in bin k such that 2^(k-1) < size <= 2^k.
 void my_free(void *ptr) {
   Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
-  //coalesce_fwd(cur);
   size_t index = log_upper(cur->size);
 
   /*
