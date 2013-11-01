@@ -107,6 +107,24 @@
 #define SIZE_T_SIZE 26
 // #define SIZE_T_SIZE sizeof(size_t)*8
 
+const int DBtab64[64] = {
+  0,    1,    2,  53,   3,    7,  54, 27, 
+  4,  38, 41,   8,  34, 55, 48, 28, 
+  62,   5,  39, 46, 44, 42, 22,   9, 
+  24, 35, 59, 56, 49, 18, 29, 11, 
+                  63, 52,   6,  26, 37, 40, 33, 47, 
+                      61, 45, 43, 21, 23, 58, 17, 10, 
+                          51, 25, 36, 32, 60, 20, 57, 16, 
+                              50, 31, 19, 15, 30, 14, 13, 12  
+};
+
+const int DBtab32[32] = {
+  0,  9,  1, 10, 13, 21,  2, 29,
+  11, 14, 16, 18, 22, 25,  3, 30,
+  8, 12, 20, 28, 15, 17, 24,  7,
+  19, 27, 23,  6, 26,  5,  4, 31
+};
+
 struct free_list {
   struct free_list* next;
   size_t size;
@@ -172,6 +190,8 @@ int my_init() {
 
 // Returns the upper bound of the log in O(lg N) for N-bit num.
 // Bit hack attained from Bit Twiddling Hacks page.
+
+/*
 static inline size_t log_upper(size_t val) {
   const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
   const unsigned int S[] = {1, 2, 4, 8, 16};
@@ -187,6 +207,32 @@ static inline size_t log_upper(size_t val) {
   }
   return r+1;
 }
+*/
+
+static inline size_t log_upper(size_t v){
+      v--;
+          v |= v >> 1;
+              v |= v >> 2;
+                  v |= v >> 4;
+                      v |= v >> 8;
+                          v |= v >> 16;
+                            v |= v >> 32;
+                              v++;
+  return DBtab64[(v * 0x022fdd63cc95386d) >> 58];
+}
+
+/*
+static inline size_t log_upper (size_t value){
+    value = value << 1;
+    value |= value >> 1;
+    value |= value >> 2;
+    value |= value >> 4;
+    value |= value >> 8;
+    value |= value >> 16;
+    return DBtab32[(uint32_t)(value*0x07C4ACDD) >> 27];
+}
+
+*/
 // There is a bit hack to do this in lg N ops where
 // N is the number of bits of val (lglg(val)).
 // Much faster than current version but current
@@ -239,6 +285,7 @@ void * my_malloc(size_t size) {
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
+
   size += FREE_LIST_SIZE;
   size_t aligned_size = max(ALIGN(size), MIN_SIZE);
   size_t lg_size = log_upper(aligned_size);
@@ -267,10 +314,9 @@ void * my_malloc(size_t size) {
       if (c->size - aligned_size > MAX_DIFF)
         break;
 
+      FreeList[index] = c->next;
       if (c->size - aligned_size > FREE_LIST_SIZE + MIN_DIFF)
         chunk(c, aligned_size);
-
-      FreeList[index] = c->next;
       // c->free = 0;
       return (void*)((char*)c + FREE_LIST_SIZE);
     }
