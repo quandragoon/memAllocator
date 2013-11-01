@@ -87,7 +87,6 @@
   #endif
 #endif
 
-// #define MIN_BLOCK_SIZE 4
 
 // All blocks must have a specified minimum alignment.
 // The alignment requirement (from config.h) is >= 8 bytes.
@@ -109,32 +108,20 @@
 struct free_list {
   struct free_list* next;
   size_t size;
-  //short free;
 };
 
-typedef struct free_list Free_List;
+typedef struct free_list Header;
 
-struct footer {
-  size_t size;
-  // Free_List* next; 
-};
-typedef struct footer Footer;
 // The smallest aligned value that will hold the header for the free list.
-#define FREE_LIST_SIZE (ALIGN(sizeof(Free_List)))
-#define FOOTER_SIZE (ALIGN(sizeof(Footer)))
+#define HEADER_SIZE (ALIGN(sizeof(Header)))
 
-Free_List* FreeList[SIZE_T_SIZE];
+Header* FreeList[SIZE_T_SIZE];
 
-// DeBruijnSequence to calculate log of power of two.
-static const size_t DeBruijnLookUp[32] = 
-  {
-      0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8, 
-        31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
-  };
-
-// check - This checks our invariant that the size_t header before every
-// block points to either the beginning of the next block, or the end of the
-// heap.
+// check - This checks our invariants.
+// 1. All sizes should add up to total space allocated from heap.
+// 2. Each bin has chunks of size between 2^(i-1) and 2^i, inclusive
+// of the latter.
+// 3. Each bin has chunks of increasing size as we progress through (sorted).
 int my_check() {
   char *p;
   char *lo = (char*)mem_heap_lo();
@@ -143,7 +130,7 @@ int my_check() {
 
   p = lo;
   while (lo <= p && p < hi) {
-    Free_List *cur = (Free_List*)p;
+    Header *cur = (Header*)p;
     size = ALIGN(cur->size);
     p += size;
   }
@@ -154,55 +141,37 @@ int my_check() {
     return -1;
   }
 
+
   for (int i=0; i < SIZE_T_SIZE; i++) {
-    Free_List *this = FreeList[i];
+    Header *this = FreeList[i];
+    size_t previous = 0;
     while (this) {
       if (this->size <= (1 << (i-1)) || this->size > (1 << i)) {
-        printf("You seriously suck. Bin %d had a fucked up node\n", i);
+        printf("Bin %d had a node of incorrect size\n", i);
         return -1;
       }
+      if (this->size < previous) {
+        printf("Sorted invariant was broken by bin %d\n", i);
+        return -1;
+      }
+      previous = this->size;
       this = this->next;
     }
   }
   return 0;
 }
 
-// init - Initialize the malloc package.  Called once before any other
-// calls are made.  Since this is a very simple implementation, we just
-// return success.
+// init - Initialize the malloc package.  Just assigns all bins
+// in the FreeList array.
 int my_init() {
   for(int i = 0; i < SIZE_T_SIZE; i++)
     FreeList[i] = NULL;
   return 0;
 }
 
-// Round up to next power of two.
-// Uses bit hack in Lecture 3 of 6.172 Fall 2013.
-static inline size_t next_pow_two(size_t val) {
-  // Subtracting one handles boundary case.
-  val--;
-  val |= val >> 1;
-  val |= val >> 2;
-  val |= val >> 4;
-  val |= val >> 8;
-  val |= val >> 16;
-  val++;
-  return val;
-}
-
-// Assumes that val is power of two and uses
-// precomputed DeBruijnSequence to compute value.
-static inline size_t pow_two_log(size_t val) {
-  return DeBruijnLookUp[(uint32_t)(val * 0x077CB531U) >> 27];
-}
-
 // Returns the upper bound of the log in O(lg N) for N-bit num.
 // Bit hack attained from Bit Twiddling Hacks page.
-// UPDATE: now returns result of rounding to power of two
-// then using DeBruijn sequence to return log.
 static inline size_t log_upper(size_t val) {
-  // return pow_two_log(next_pow_two(val));
-  
   const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
   const unsigned int S[] = {1, 2, 4, 8, 16};
   size_t r = 0;
@@ -218,41 +187,23 @@ static inline size_t log_upper(size_t val) {
   return r+1;
 }
 
-// Split a power of 2 into multiple powers of 2.
-// Algorithm mentioned in lecture for fixed power of 2 binning.
-// Reference: Lecture 3 slides on bit hacks.
-static inline void split (Free_List* cur, size_t size, size_t index)
-{
-  Free_List* ptr = NULL;
-  size_t s = 1 << index;
-  while (index > 0 && size != index){
-    index--;
-    s >>= 1;
-    ptr = (Free_List*)((char*)cur + s);
-    ptr->size = s;
-    ptr->next = FreeList[index];
-    FreeList[index] = ptr;
-  }
-  cur->size = size;
-  return;
-}
-
 // When binning by ranges with variable size allocated blocks, 
 // shaves off extra portion of chunk and frees it
-// prior to allocating.
-// This is to allocate exactly what the user asked for and conserve
-// the extra in the free list bins.
-static inline void chunk (Free_List* cur, size_t aligned_size){
-  Free_List* chunk = (Free_List*)((char*)cur + aligned_size);
+// prior to allocating. This is to allocate exactly what the user 
+// asked for and conserve the extra in the free list bins.
+static inline void chunk (Header* cur, size_t aligned_size){
+  Header* chunk = (Header*)((char*)cur + aligned_size);
   chunk->size = cur->size - aligned_size;
   cur->size = aligned_size;
-  void* ptr = (void*)((char*)chunk + FREE_LIST_SIZE);
+  void* ptr = (void*)((char*)chunk + HEADER_SIZE);
   my_free(ptr);
 }
 
+// simple max function
 static inline size_t max (size_t x, size_t y){
   return (x > y) ? x : y;
 }
+// simple min function
 static inline size_t min (size_t x, size_t y){
   return (x < y) ? x : y;
 }
@@ -268,80 +219,55 @@ void * my_malloc(size_t size) {
 
   assert (my_check() == 0);
 
-  size += FREE_LIST_SIZE;
+  size += HEADER_SIZE;
   // Use parameter to define "too small" of a request.
   size_t aligned_size = max(ALIGN(size), MIN_SIZE);
   // Find appropriate bin to start searching.
   size_t lg_size = log_upper(aligned_size);
   size_t index = lg_size + 1;
 
-  Free_List *prev, *cur;
+  Header *prev, *cur;
   prev = NULL;
   cur = FreeList[lg_size];
 
-  // search for smallest size that fits
+  // Search for smallest size that fits based on sorted
+  // order.
   while (cur && cur->size < aligned_size){
     prev = cur;
     cur = cur->next;
   }
-  // if we found an element
+  // If we found an element, we check the boundary
+  // case that it may be the first element.
   if (cur){
     if(!prev)
       FreeList[lg_size] = cur->next;
     else
       prev->next = cur->next;
     
-    // cur->free = 0;
-    return (void*)((char*)cur + FREE_LIST_SIZE);
+    return (void*)((char*)cur + HEADER_SIZE);
   }
 
   while (index < SIZE_T_SIZE){
     if (FreeList[index]){
-      Free_List* c = FreeList[index];
+      Header* c = FreeList[index];
       // Parameter to determine whether to 
       // break off new heap chunk or not.
+      // This is based on whether it's worth allocating
+      // a large block to a relatively small malloc
+      // request.
       if (c->size - aligned_size > MAX_DIFF)
         break;
 
       FreeList[index] = c->next;
-      // Checks parameter to see whether it's worth chunking.
-      if (c->size - aligned_size > FREE_LIST_SIZE + MIN_DIFF)
+      // Checks parameter to see whether it's worth chunking
+      // 'c' into two pieces based on the aligned_size.
+      if (c->size - aligned_size > HEADER_SIZE + MIN_DIFF)
         chunk(c, aligned_size);
 
-      return (void*)((char*)c + FREE_LIST_SIZE);
+      return (void*)((char*)c + HEADER_SIZE);
     }
     index++;
   }
-
-  /*
-  size += FREE_LIST_SIZE;
-  size_t aligned_size = max(ALIGN(size), ALIGN(MIN_SIZE));
-  // size_t x = log_upper(aligned_size);
-  // size_t lg_size = x ^ ((x ^ MIN_BLOCK_SIZE) & -(x < MIN_BLOCK_SIZE));
-  size_t lg_size = log_upper(aligned_size);
-  aligned_size = 1 << lg_size;
-
-  Free_List* cur = NULL;
-  if (FreeList[lg_size]){
-    cur = FreeList[lg_size];
-    FreeList[lg_size] = cur->next;
-    return (void*)((char*)cur + FREE_LIST_SIZE);
-  }
-
-  for (size_t index = lg_size; index < SIZE_T_SIZE; index++){
-    if (FreeList[index]){
-      cur = FreeList[index];
-      if (cur->size - aligned_size > MAX_DIFF)
-        break;
-      FreeList[index] = cur->next;
-      cur->next = NULL;
-      if (index > lg_size + 1){
-        split (cur, lg_size, index);
-      }
-      return (void*)((char*)cur + FREE_LIST_SIZE);
-    }
-  }
-  */
 
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
@@ -358,86 +284,41 @@ void * my_malloc(size_t size) {
     return NULL;
   } else {
     // We store the size of the block we've allocated in the first
-    // FREE_LIST_SIZE bytes.
-    ((Free_List*)p)->next = NULL;
-    // ((Free_List*)p)->free = 0;
-    ((Free_List*)p)->size = aligned_size;
-    //TODO: set footer
+    // HEADER_SIZE bytes.
+    ((Header*)p)->next = NULL;
+    ((Header*)p)->size = aligned_size;
 
     // Then, we return a pointer to the rest of the block of memory,
     // which is at least size bytes long.  We have to cast to uint8_t
     // before we try any pointer arithmetic because voids have no size
     // and so the compiler doesn't know how far to move the pointer.
-    // Since a uint8_t is always one byte, adding FREE_LIST_SIZE after
-    // casting advances the pointer by FREE_LIST_SIZE bytes.
-    return (void *)((char *)p + FREE_LIST_SIZE);
+    // Since a uint8_t is always one byte, adding HEADER_SIZE after
+    // casting advances the pointer by HEADER_SIZE bytes.
+    return (void *)((char *)p + HEADER_SIZE);
   }
 }
 
-
-// Takes a free list pointer and checks whether it can be 
-// combined (coalesced) with the next contiguous block.
-// TODO: Can be optimized with reverse list pointers,
-// so traversal of linked lists is fast.
-
-void coalesce_fwd(Free_List *first) {
-  // Need to do a heap boundary check here
-  char *boundary = (char*)mem_heap_hi() + 1;
-  // If this is the last block in allocated mem, we return.
-  if (boundary == ((char*) first + first->size) ) {
-    return;
-  }
-  Free_List *find = (Free_List*)((char*) first + first->size);
-  // do ops if only the next contiguous block is free.
-  //if (find->free) {
-  if (0) {
-    size_t bin = log_upper(find->size);
-    Free_List *cur = FreeList[bin];
-    Free_List *prev = NULL;
-    // Iterate through bin list to remove
-    // 'find' from the free list.
-    // We want to remove it from the Free List
-    // to ensure that we do not allocate this 
-    // piece twice (since we plan on coalescing it
-    // into an allocated piece now).
-    while (cur != find) {
-      // should be able to find item
-      assert (cur != NULL);
-      prev = cur;
-      cur = cur->next;
-    }
-    // edge case if prev is NULL
-    if (prev) {
-      prev->next = cur->next;
-    }
-    else {
-      FreeList[bin] = cur->next;
-    }
-    // Effectively coalescing two pieces into the first.
-    //find->free = 0;
-    first->size += find->size; 
-  }
-}
 
 // free - Find the appropriate bin for a freed
 // element by accessing its header and finding
 // its size.
 // Places size in bin k such that 2^(k-1) < size <= 2^k.
+// Also, places the chunk in the bin such that the bin
+// is still sorted.
 void my_free(void *ptr) {
-  assert (my_check() == 0);
-  Free_List* cur = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
+  Header* cur = (Header*)((char*)ptr - HEADER_SIZE);
   size_t index = log_upper(cur->size);
-  // coalesce_fwd(cur);
-  Free_List* p = NULL;
-  Free_List* c = FreeList[index];
+  Header* p = NULL;
+  Header* c = FreeList[index];
 
-  // keep lists sorted
+  // Keep lists sorted.
   while(c && c->size < cur->size){
     p = c;
     c = c->next;
   }
 
-  // edge case where p is NULL
+  // Edge case where p is NULL,
+  // c becomes the first element of the bin.
   if (!p){
     cur->next = c;
     FreeList[index] = cur;
@@ -446,11 +327,12 @@ void my_free(void *ptr) {
     cur->next = c;
     p->next = cur;
   }
-  //cur->free = 1;
+  assert (my_check() == 0);
 }
 
 // realloc - Implemented simply in terms of malloc and free
 void * my_realloc(void *ptr, size_t size) {
+  assert (my_check() == 0);
   void *newptr;
   size_t copy_size;
 
@@ -462,11 +344,12 @@ void * my_realloc(void *ptr, size_t size) {
     return NULL;
   }
 
-
-  size_t aligned_size = ALIGN(size + FREE_LIST_SIZE);
+  // Total necessary size including header.
+  size_t aligned_size = ALIGN(size + HEADER_SIZE);
   // Here is the header we are working with.
-  Free_List* mem = (Free_List*)((char*)ptr - FREE_LIST_SIZE);
-  copy_size = min(mem->size, aligned_size) - FREE_LIST_SIZE;
+  Header* mem = (Header*)((char*)ptr - HEADER_SIZE);
+  // This is the amount we want to copy by.
+  copy_size = min(mem->size, aligned_size) - HEADER_SIZE;
 
 
   // If the new block is smaller than the old one, we have to stop copying
@@ -481,7 +364,9 @@ void * my_realloc(void *ptr, size_t size) {
   if (mem->size >= aligned_size)
     return ptr;
   
-  // for consecutive, increasing reallocs
+  // For consecutive, increasing reallocs.
+  // If the block being reallocated is at the end of
+  // the allocated portion of the heap, just extend it.
   if ((char*)mem + mem->size == my_heap_hi()+1)
   {
     mem_sbrk(aligned_size - mem->size);
@@ -495,7 +380,7 @@ void * my_realloc(void *ptr, size_t size) {
     return NULL;
 
   // Get the size of the old block of memory.  Take a peek at my_malloc(),
-  // where we stashed this in the FREE_LIST_SIZE bytes directly before the
+  // where we stashed this in the HEADER_SIZE bytes directly before the
   // address we returned.  Now we can back up by that many bytes and read
   // the size by pulling it from the free list header.
 
