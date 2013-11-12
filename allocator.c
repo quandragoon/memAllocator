@@ -182,9 +182,6 @@ int my_check() {
 int my_init() {
   for(int i = 0; i < NUM_BINS; i++)
     FreeList[i] = NULL;
-
-  Footer* f = mem_sbrk(FOOTER_SIZE);
-  f->size = 0;
   return 0;
 }
 
@@ -254,6 +251,7 @@ static inline size_t min (size_t x, size_t y){
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
+  assert (my_check() == 0);
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
@@ -382,6 +380,7 @@ void coalesce_fwd(Header *first) {
 }
 */
 
+// Removes a node from a list.
 void remove_from_list(Header* node){
   size_t ind = log_upper(node->size);
   if (!node->prev){
@@ -398,11 +397,39 @@ void remove_from_list(Header* node){
   node->next = NULL;
 }
 
+// Adds a node to the list.
+void add_to_list(Header* cur) {
+  size_t index = log_upper(cur->size);
+
+  Header* p = NULL;
+  Header* c = FreeList[index];
+
+  while(c && c->size < cur->size){
+    p = c;
+    c = c->next;
+  }
+
+  cur->next = c;
+  if(c)
+    c->prev = cur;
+
+  if (!p){
+    FreeList[index] = cur;
+    cur->prev = NULL;
+  }
+  else{
+    p->next = cur;
+    cur->prev = p;
+  }
+
+  cur->free = 1;
+}
+
+
+
 // takes a mid block, checks left and right to see if coalescing is possible.
-void coalesce (Header * mid){
-  
+Header* coalesce (Header * mid){
   size_t total = mid->size;
-  /*
   Header* right = (Header*)((char*)mid + mid->size);
   // check right
   if ((void*)right != my_heap_hi()+1){
@@ -411,21 +438,25 @@ void coalesce (Header * mid){
       total += right->size;
     }
   }
-  */
   // check left
-  Footer* left_f = (Footer*)((char*)mid - FOOTER_SIZE);
-  if (left_f->size){
-    Header* left = (Header*)((char*)mid - left_f->size);
-    if (left->free){
-      remove_from_list(left);
-      total += left->size;
-      mid = left;
-    }
+  if ((void*)mid == my_heap_lo()) {
+    mid->size = total;
+    ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;
+    return mid;
   }
-  else
-    printf("%lu ", left_f->size);
+  Footer* left_f = (Footer*)((char*)mid - FOOTER_SIZE);
+  Header* left = (Header*)((char*)mid - left_f->size);
+  if (!left->free){
+    mid->size = total;
+    ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;
+    return mid;
+  }
+  remove_from_list(left);
+  total += left->size;
+  mid = left;
   mid->size = total;
   ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;
+  return mid;
 }
 
 // free - Find the appropriate bin for a freed
@@ -434,7 +465,7 @@ void coalesce (Header * mid){
 // Places size in bin k such that 2^(k-1) < size <= 2^k.
 void my_free(void *ptr) {
   Header* cur = (Header*)((char*)ptr - HEADER_SIZE);
-  coalesce(cur);
+  cur = coalesce(cur);
   size_t index = log_upper(cur->size);
 
   Header* p = NULL;
@@ -460,20 +491,6 @@ void my_free(void *ptr) {
 
   cur->free = 1;
   
- /*
-  cur->next = FreeList[index];
-  // cur->free = 1;
-  FreeList[index] = cur;
-  */
-  // Want to place freed block in a bin
-  // that will allow it to be sufficient
-  // for any future query of that size (2^k).
-  // In other words, put in kth bin if
-  // 2^k < size <= 2^(k+1)
-  // NOTE: Do a power of two check here
-  // to prevent putting 2^k in k-1 bin.
-  // assert((log_upper(size) > 0) && (log_upper(size) < NUM_BINS));
-  // Append to front of free list
 }
 
 // realloc - Implemented simply in terms of malloc and free
