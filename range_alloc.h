@@ -44,9 +44,9 @@
   #elif (TRACE_CLASS == 3)
     #define MIN_SIZE 8
   #elif (TRACE_CLASS == 4)
-    #define MIN_SIZE 128
+    #define MIN_SIZE 4
   #elif (TRACE_CLASS == 5)
-    #define MIN_SIZE 1
+    #define MIN_SIZE 4
   #elif (TRACE_CLASS == 6)
     #define MIN_SIZE 128
   #elif (TRACE_CLASS == 7)
@@ -69,9 +69,9 @@
   #elif (TRACE_CLASS == 3)
     #define MIN_DIFF 256
   #elif (TRACE_CLASS == 4)
-    #define MIN_DIFF 1024
-  #elif (TRACE_CLASS == 5)
     #define MIN_DIFF 128
+  #elif (TRACE_CLASS == 5)
+    #define MIN_DIFF 1
   #elif (TRACE_CLASS == 6)
     #define MIN_DIFF 1024
   #elif (TRACE_CLASS == 7)
@@ -236,7 +236,6 @@ static inline void add_to_list(Header* cur) {
       p->next = cur;
       cur->prev = p;
     }
-    // cur->free = 1;
     cur->size &= ~1;
 }
 
@@ -297,7 +296,6 @@ void * my_malloc(size_t size) {
     }
     cur->prev = NULL;
     cur->next = NULL;
-    // cur->free = 0;
     cur->size |= 1;
     return (void*)((char*)cur + HEADER_SIZE);
   }
@@ -305,17 +303,12 @@ void * my_malloc(size_t size) {
   while (index < NUM_BINS){
     if (FreeList[index]){
       Header* c = FreeList[index];
-      /*
-      if (c->size - aligned_size > MAX_DIFF)
-        break;
-        */
 
       FreeList[index] = c->next;
       if (c->next)
         c->next->prev = NULL;
       c->prev = NULL;
       c->next = NULL;
-      // c->free = 0;
       
       if (SIZE(c->size) - aligned_size > TOTAL_EXTRA_SIZE + MIN_DIFF)
         chunk(c, aligned_size);
@@ -345,7 +338,6 @@ void * my_malloc(size_t size) {
     // HEADER_SIZE bytes.
     ((Header*)p)->next = NULL;
     ((Header*)p)->prev = NULL;
-    // ((Header*)p)->free = 0;
     ((Header*)p)->size = aligned_size + 1;
     ((Footer*)((char*)p + aligned_size - FOOTER_SIZE))->size = aligned_size;
     // Then, we return a pointer to the rest of the block of memory,
@@ -439,17 +431,7 @@ void my_free(void *ptr) {
     cur->prev = p;
   }
   
-  /*
-  Header* h = FreeList[index];
-  cur->next = h;
-  if(h)
-    h->prev = cur;
-  h = cur;
-  cur->prev = NULL;
-  */
-
   // Set node as free.
-  // cur->free = 1;
   cur->size &= ~1;
 }
 
