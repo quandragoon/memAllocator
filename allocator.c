@@ -36,21 +36,23 @@
 
 #ifndef MIN_SIZE
   #if (TRACE_CLASS == 0)
-    #define MIN_SIZE 1
-  #elif (TRACE_CLASS == 2)
+    #define MIN_SIZE 32
+  #elif (TRACE_CLASS == 1)
     #define MIN_SIZE 4
+  #elif (TRACE_CLASS == 2)
+    #define MIN_SIZE 128
   #elif (TRACE_CLASS == 3)
     #define MIN_SIZE 8
   #elif (TRACE_CLASS == 4)
-    #define MIN_SIZE 2
+    #define MIN_SIZE 128
   #elif (TRACE_CLASS == 5)
     #define MIN_SIZE 1
   #elif (TRACE_CLASS == 6)
-    #define MIN_SIZE 64
+    #define MIN_SIZE 128
   #elif (TRACE_CLASS == 7)
-    #define MIN_SIZE 512
+    #define MIN_SIZE 1024
   #elif (TRACE_CLASS == 8)
-    #define MIN_SIZE 4
+    #define MIN_SIZE 16
   #else
     #define MIN_SIZE 64
   #endif
@@ -59,21 +61,23 @@
 
 #ifndef MIN_DIFF
   #if (TRACE_CLASS == 0)
-    #define MIN_DIFF 4
+    #define MIN_DIFF 16
+  #elif (TRACE_CLASS == 1)
+    #define MIN_DIFF 8
   #elif (TRACE_CLASS == 2)
-    #define MIN_DIFF 2
+    #define MIN_DIFF 16
   #elif (TRACE_CLASS == 3)
     #define MIN_DIFF 256
   #elif (TRACE_CLASS == 4)
-    #define MIN_DIFF 2
+    #define MIN_DIFF 1024
   #elif (TRACE_CLASS == 5)
-    #define MIN_DIFF 16384
-  #elif (TRACE_CLASS == 6)
     #define MIN_DIFF 128
+  #elif (TRACE_CLASS == 6)
+    #define MIN_DIFF 1024
   #elif (TRACE_CLASS == 7)
-    #define MIN_DIFF 65536
+    #define MIN_DIFF 128
   #elif (TRACE_CLASS == 8)
-    #define MIN_DIFF 2
+    #define MIN_DIFF 4
   #else
     #define MIN_DIFF 128
   #endif
@@ -81,21 +85,23 @@
 
 #ifndef MAX_DIFF
   #if (TRACE_CLASS == 0)
-    #define MAX_DIFF 2048
+    #define MAX_DIFF 262144
+  #elif (TRACE_CLASS == 1)
+    #define MAX_DIFF 131072
   #elif (TRACE_CLASS == 2)
-    #define MAX_DIFF 1024
+    #define MAX_DIFF 128
   #elif (TRACE_CLASS == 3)
     #define MAX_DIFF 32768
   #elif (TRACE_CLASS == 4)
-    #define MAX_DIFF 65536
+    #define MAX_DIFF 262144
   #elif (TRACE_CLASS == 5)
-    #define MAX_DIFF 1024
+    #define MAX_DIFF 262144
   #elif (TRACE_CLASS == 6)
-    #define MAX_DIFF 16384
+    #define MAX_DIFF 262144
   #elif (TRACE_CLASS == 7)
-    #define MAX_DIFF 65536
+    #define MAX_DIFF 262144
   #elif (TRACE_CLASS == 8)
-    #define MAX_DIFF 4096
+    #define MAX_DIFF 131072
   #else
     #define MAX_DIFF 512
   #endif
@@ -118,8 +124,7 @@
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~(ALIGNMENT-1))
 
 // The size of a size_t in bits (approx).
-#define NUM_BINS 32
-// #define NUM_BINS sizeof(size_t)*8
+#define NUM_BINS 26
 
 struct free_list {
   struct free_list* next;
@@ -132,14 +137,15 @@ typedef struct free_list Header;
 
 struct footer {
   size_t size;
-  // Header* next; 
 };
 typedef struct footer Footer;
 // The smallest aligned value that will hold the header for the free list.
 #define HEADER_SIZE (ALIGN(sizeof(Header)))
 #define FOOTER_SIZE (ALIGN(sizeof(Footer)))
+#define TOTAL_EXTRA_SIZE HEADER_SIZE + FOOTER_SIZE
 
 Header* FreeList[NUM_BINS];
+void* heap_lo;
 
 // check - This checks our invariant that the size_t header before every
 // block points to either the beginning of the next block, or the end of the
@@ -182,6 +188,7 @@ int my_check() {
 int my_init() {
   for(int i = 0; i < NUM_BINS; i++)
     FreeList[i] = NULL;
+  heap_lo = my_heap_lo();
   return 0;
 }
 
@@ -228,17 +235,42 @@ static inline void split (Header* cur, size_t size, size_t index)
   return;
 }
 
+static inline void add_to_list(Header* cur) {
+    size_t index = log_upper(cur->size);
+    Header* p = NULL;
+    Header* c = FreeList[index];
+    while(c && c->size < cur->size){
+      p = c;
+      c = c->next;
+    }
+    cur->next = c;
+    if(c)
+      c->prev = cur;
+    if (!p){
+      FreeList[index] = cur;
+      cur->prev = NULL;
+    }
+    else{
+      p->next = cur;
+      cur->prev = p;
+    }
+    cur->free = 1;
+}
+
 // When binning by ranges with variable size allocated blocks, 
 // shaves off extra portion of chunk and frees it
 // prior to allocating.
 // This is to allocate exactly what the user asked for and conserve
 // the extra in the free list bins.
 static inline void chunk (Header* cur, size_t aligned_size){
-  Header* chunk = (Header*)((char*)cur + aligned_size);
-  chunk->size = cur->size - aligned_size;
-  cur->size = aligned_size;
-  void* ptr = (void*)((char*)chunk + HEADER_SIZE);
-  my_free(ptr);
+    Header* chunk = (Header*)((char*)cur + aligned_size);
+    chunk->size = cur->size - aligned_size;
+    cur->size = aligned_size;
+    Footer* chunk_f = (Footer*)((char*)chunk + chunk->size - FOOTER_SIZE);
+    chunk_f->size = chunk->size;
+    Footer* cur_f = (Footer*)((char*)cur + aligned_size - FOOTER_SIZE);
+    cur_f->size = aligned_size;
+    add_to_list(chunk);
 }
 
 static inline size_t max (size_t x, size_t y){
@@ -255,7 +287,7 @@ void * my_malloc(size_t size) {
   // Find the upper bound lg of size to find corresponding bin
   // If bin is not null, we allocate
 
-  size += (HEADER_SIZE + FOOTER_SIZE);
+  size += TOTAL_EXTRA_SIZE;
   size_t aligned_size = max(ALIGN(size), MIN_SIZE);
   size_t lg_size = log_upper(aligned_size);
   size_t index = lg_size + 1;
@@ -288,13 +320,16 @@ void * my_malloc(size_t size) {
   while (index < NUM_BINS){
     if (FreeList[index]){
       Header* c = FreeList[index];
+      /*
       if (c->size - aligned_size > MAX_DIFF)
         break;
-
-      //if (c->size - aligned_size > HEADER_SIZE + MIN_DIFF)
-       // chunk(c, aligned_size);
+        */
 
       FreeList[index] = c->next;
+      
+      if (c->size - aligned_size > HEADER_SIZE + MIN_DIFF)
+        chunk(c, aligned_size);
+
       if (c->next)
         c->next->prev = NULL;
       c->prev = NULL;
@@ -438,8 +473,8 @@ Header* coalesce (Header * mid){
       total += right->size;
     }
   }
-  // check left
-  if ((void*)mid == my_heap_lo()) {
+  //check left
+  if ((void*)mid == heap_lo){
     mid->size = total;
     ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;
     return mid;
@@ -515,9 +550,9 @@ void * my_realloc(void *ptr, size_t size) {
 
   // If the new block is smaller than the old one, we have to stop copying
   // early so that we don't write off the end of the new block of memory.
+  
   if (aligned_size + MIN_DIFF < copy_size){
-  // if (2*aligned_size <= copy_size){
-    //chunk(mem, aligned_size);
+    chunk(mem, aligned_size);
     return ptr;
   }
 
@@ -531,6 +566,8 @@ void * my_realloc(void *ptr, size_t size) {
   {
     mem_sbrk(aligned_size - mem->size);
     mem->size = aligned_size;
+    Footer* f = (Footer*)((char*)mem + aligned_size - FOOTER_SIZE);
+    f->size = aligned_size;
     return ptr;
   }
   
