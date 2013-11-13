@@ -122,6 +122,7 @@
 
 // Rounds up to the nearest multiple of ALIGNMENT.
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~(ALIGNMENT-1))
+#define SIZE(size) (size & ~1)
 
 // The size of a size_t in bits (approx).
 #define NUM_BINS 26
@@ -130,7 +131,6 @@ struct free_list {
   struct free_list* next;
   struct free_list* prev;
   size_t size;
-  short free;
 };
 
 typedef struct free_list Header;
@@ -159,7 +159,7 @@ int my_check() {
   p = lo;
   while (lo <= p && p < hi) {
     Header *cur = (Header*)p;
-    size = ALIGN(cur->size);
+    size = ALIGN(SIZE(cur->size));
     p += size;
   }
 
@@ -172,7 +172,7 @@ int my_check() {
   for (int i=0; i < NUM_BINS; i++) {
     Header *this = FreeList[i];
     while (this) {
-      if (this->size <= (1 << (i-1)) || this->size > (1 << i)) {
+      if (SIZE(this->size) <= (1 << (i-1)) || SIZE(this->size) > (1 << i)) {
         printf("You seriously suck. Bin %d had a fucked up node\n", i);
         return -1;
       }
@@ -195,6 +195,7 @@ int my_init() {
 // Returns the upper bound of the log in O(lg N) for N-bit num.
 // Bit hack attained from Bit Twiddling Hacks page.
 static inline size_t log_upper(size_t val) {
+  val = SIZE(val);
   const unsigned int b[] = {0x2, 0xC, 0xF0, 0xFF00, 0xFFFF0000};
   const unsigned int S[] = {1, 2, 4, 8, 16};
   size_t r = 0;
@@ -216,30 +217,11 @@ static inline size_t log_upper(size_t val) {
 // and free are working.
 
 
-// Split a power of 2 into multiple powers of 2.
-// Algorithm mentioned in lecture for fixed power of 2 binning.
-// Reference: Lecture 3 slides on bit hacks.
-static inline void split (Header* cur, size_t size, size_t index)
-{
-  Header* ptr = NULL;
-  size_t s = 1 << index;
-  while (index > 0 && size != index){
-    index--;
-    s >>= 1;
-    ptr = (Header*)((char*)cur + s);
-    ptr->size = s;
-    ptr->next = FreeList[index];
-    FreeList[index] = ptr;
-  }
-  cur->size = size;
-  return;
-}
-
 static inline void add_to_list(Header* cur) {
     size_t index = log_upper(cur->size);
     Header* p = NULL;
     Header* c = FreeList[index];
-    while(c && c->size < cur->size){
+    while(c && c->size < SIZE(cur->size)){
       p = c;
       c = c->next;
     }
@@ -254,7 +236,8 @@ static inline void add_to_list(Header* cur) {
       p->next = cur;
       cur->prev = p;
     }
-    cur->free = 1;
+    // cur->free = 1;
+    cur->size &= ~1;
 }
 
 // When binning by ranges with variable size allocated blocks, 
@@ -265,7 +248,7 @@ static inline void add_to_list(Header* cur) {
 
 static inline void chunk (Header* cur, size_t aligned_size){
     Header* chunk = (Header*)((char*)cur + aligned_size);
-    chunk->size = cur->size - aligned_size;
+    chunk->size = SIZE(cur->size) - aligned_size;
     cur->size = aligned_size;
     Footer* chunk_f = (Footer*)((char*)chunk + chunk->size - FOOTER_SIZE);
     chunk_f->size = chunk->size;
@@ -314,7 +297,8 @@ void * my_malloc(size_t size) {
     }
     cur->prev = NULL;
     cur->next = NULL;
-    cur->free = 0;
+    // cur->free = 0;
+    cur->size |= 1;
     return (void*)((char*)cur + HEADER_SIZE);
   }
 
@@ -331,10 +315,12 @@ void * my_malloc(size_t size) {
         c->next->prev = NULL;
       c->prev = NULL;
       c->next = NULL;
-      c->free = 0;
+      // c->free = 0;
       
-      if (c->size - aligned_size > HEADER_SIZE + MIN_DIFF)
+      if (SIZE(c->size) - aligned_size > TOTAL_EXTRA_SIZE + MIN_DIFF)
         chunk(c, aligned_size);
+      
+      c->size |= 1;
 
       return (void*)((char*)c + HEADER_SIZE);
     }
@@ -359,8 +345,8 @@ void * my_malloc(size_t size) {
     // HEADER_SIZE bytes.
     ((Header*)p)->next = NULL;
     ((Header*)p)->prev = NULL;
-    ((Header*)p)->free = 0;
-    ((Header*)p)->size = aligned_size;
+    // ((Header*)p)->free = 0;
+    ((Header*)p)->size = aligned_size + 1;
     ((Footer*)((char*)p + aligned_size - FOOTER_SIZE))->size = aligned_size;
     // Then, we return a pointer to the rest of the block of memory,
     // which is at least size bytes long.  We have to cast to uint8_t
@@ -395,7 +381,7 @@ Header* coalesce (Header * mid){
   Header* right = (Header*)((char*)mid + mid->size);
   // check right
   if ((void*)right != my_heap_hi()+1){
-    if (right->free){
+    if (!(right->size & 1)){
       remove_from_list(right);
       total += right->size;
     }
@@ -408,7 +394,7 @@ Header* coalesce (Header * mid){
   }
   Footer* left_f = (Footer*)((char*)mid - FOOTER_SIZE);
   Header* left = (Header*)((char*)mid - left_f->size);
-  if (!left->free){
+  if (left->size & 1){
     mid->size = total;
     ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;
     return mid;
@@ -427,7 +413,9 @@ Header* coalesce (Header * mid){
 // Places size in bin k such that 2^(k-1) < size <= 2^k.
 void my_free(void *ptr) {
   Header* cur = (Header*)((char*)ptr - HEADER_SIZE);
+  cur->size = SIZE(cur->size);
   cur = coalesce(cur);
+  cur->size = SIZE(cur->size);
   size_t index = log_upper(cur->size);
 
   Header* p = NULL;
@@ -450,8 +438,19 @@ void my_free(void *ptr) {
     p->next = cur;
     cur->prev = p;
   }
+  
+  /*
+  Header* h = FreeList[index];
+  cur->next = h;
+  if(h)
+    h->prev = cur;
+  h = cur;
+  cur->prev = NULL;
+  */
+
   // Set node as free.
-  cur->free = 1;
+  // cur->free = 1;
+  cur->size &= ~1;
 }
 
 // realloc - Implemented simply in terms of malloc and free
@@ -471,7 +470,7 @@ void * my_realloc(void *ptr, size_t size) {
   size_t aligned_size = ALIGN(size + HEADER_SIZE);
   // Here is the header we are working with.
   Header* mem = (Header*)((char*)ptr - HEADER_SIZE);
-  copy_size = min(mem->size, aligned_size) - HEADER_SIZE;
+  copy_size = min(SIZE(mem->size), aligned_size) - HEADER_SIZE;
 
 
   // If the new block is smaller than the old one, we have to stop copying
@@ -484,14 +483,14 @@ void * my_realloc(void *ptr, size_t size) {
 
   // Didn't shave off chunk, but still should return ptr
   // since new block smaller than old one.
-  if (mem->size >= aligned_size)
+  if (SIZE(mem->size) >= aligned_size)
     return ptr;
   
   // for consecutive, increasing reallocs
-  if ((char*)mem + mem->size == my_heap_hi()+1)
+  if ((char*)mem + SIZE(mem->size) == my_heap_hi()+1)
   {
-    mem_sbrk(aligned_size - mem->size);
-    mem->size = aligned_size;
+    mem_sbrk(aligned_size - SIZE(mem->size));
+    mem->size = aligned_size + 1;
     Footer* f = (Footer*)((char*)mem + aligned_size - FOOTER_SIZE);
     f->size = aligned_size;
     return ptr;
