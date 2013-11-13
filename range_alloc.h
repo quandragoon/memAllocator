@@ -219,8 +219,10 @@ static inline size_t log_upper(size_t val) {
 
 static inline void add_to_list(Header* cur) {
     size_t index = log_upper(cur->size);
-    Header* p = NULL;
+    // Header* p = NULL;
     Header* c = FreeList[index];
+
+    /*
     while(c && c->size < SIZE(cur->size)){
       p = c;
       c = c->next;
@@ -236,6 +238,13 @@ static inline void add_to_list(Header* cur) {
       p->next = cur;
       cur->prev = p;
     }
+    */
+    cur->next = c;
+    if (c)
+      c->prev = cur;
+    FreeList[index] = cur;
+    cur->prev = NULL;
+
     cur->size &= ~1;
 }
 
@@ -408,31 +417,7 @@ void my_free(void *ptr) {
   cur->size = SIZE(cur->size);
   cur = coalesce(cur);
   cur->size = SIZE(cur->size);
-  size_t index = log_upper(cur->size);
-
-  Header* p = NULL;
-  Header* c = FreeList[index];
-
-  while(c && c->size < cur->size){
-    p = c;
-    c = c->next;
-  }
-
-  cur->next = c;
-  if(c)
-    c->prev = cur;
-
-  if (!p){
-    FreeList[index] = cur;
-    cur->prev = NULL;
-  }
-  else{
-    p->next = cur;
-    cur->prev = p;
-  }
-  
-  // Set node as free.
-  cur->size &= ~1;
+  add_to_list(cur);
 }
 
 // realloc - Implemented simply in terms of malloc and free
