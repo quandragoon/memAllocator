@@ -96,7 +96,6 @@ int my_check() {
 // calls are made.  Since this is a very simple implementation, we just
 // return success.
 int my_init() {
-  printf("KUSU");
   for(int i=0; i < BIN_SIZE; i++) {
     // Initialize all bins to NULL.
     FreeList[i] = NULL;
@@ -109,7 +108,7 @@ int my_init() {
 //  malloc - Allocate a block by incrementing the brk pointer.
 //  Always allocate a block whose size is a multiple of the alignment.
 void * my_malloc(size_t size) {
-  assert (my_check == 0);
+  assert (my_check() == 0);
   // We allocate a little bit of extra memory so that we can store the
   // size of the block we've allocated.  Take a look at realloc to see
   // one example of a place where this can come in handy.

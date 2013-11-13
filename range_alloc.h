@@ -122,6 +122,8 @@
 
 // Rounds up to the nearest multiple of ALIGNMENT.
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~(ALIGNMENT-1))
+// SIZE will set the size, accounting for the fact that the least
+// significant bit is actually keeping track of whether the block is free.
 #define SIZE(size) (size & ~1)
 
 // The size of a size_t in bits (approx).
@@ -139,17 +141,21 @@ struct footer {
   size_t size;
 };
 typedef struct footer Footer;
-// The smallest aligned value that will hold the header for the free list.
+
+// The smallest aligned value for header, footer, and combined.
 #define HEADER_SIZE (ALIGN(sizeof(Header)))
 #define FOOTER_SIZE (ALIGN(sizeof(Footer)))
 #define TOTAL_EXTRA_SIZE HEADER_SIZE + FOOTER_SIZE
 
+// The array that acts as free list bins.
 Header* FreeList[NUM_BINS];
+// The constant heap-lo, held as a global variable.
 void* heap_lo;
 
 // check - This checks our invariant that the size_t header before every
 // block points to either the beginning of the next block, or the end of the
 // heap.
+// It also checks the validity of items in the FreeList bins.
 int my_check() {
   char *p;
   char *lo = (char*)mem_heap_lo();
@@ -184,7 +190,7 @@ int my_check() {
 
 // init - Initialize the malloc package.  Called once before any other
 // calls are made.  Since this is a very simple implementation, we just
-// return success.
+// return success after assigning the bins as NULL.
 int my_init() {
   for(int i = 0; i < NUM_BINS; i++)
     FreeList[i] = NULL;
@@ -210,11 +216,6 @@ static inline size_t log_upper(size_t val) {
   }
   return r+1;
 }
-// There is a bit hack to do this in lg N ops where
-// N is the number of bits of val (lglg(val)).
-// Much faster than current version but current
-// version is just a placeholder until malloc
-// and free are working.
 
 
 static inline void add_to_list(Header* cur) {
@@ -319,6 +320,9 @@ void * my_malloc(size_t size) {
       c->prev = NULL;
       c->next = NULL;
       
+      // If the size of the chunk we wish to allocate is much bigger
+      // than the requested size, we split into two chunks, freeing the 
+      // latter chunk and returning the former.
       if (SIZE(c->size) - aligned_size > TOTAL_EXTRA_SIZE + MIN_DIFF)
         chunk(c, aligned_size);
       
@@ -380,21 +384,24 @@ void remove_from_list(Header* node){
 Header* coalesce (Header * mid){
   size_t total = mid->size;
   Header* right = (Header*)((char*)mid + mid->size);
-  // check right
+  // Check if block directly after is free.
   if ((void*)right != my_heap_hi()+1){
+    // Recall that the free bit is stored in the least significant bit of size.
     if (!(right->size & 1)){
       remove_from_list(right);
       total += right->size;
     }
   }
-  //check left
+  // Check if block directly before is free.
   if ((void*)mid == heap_lo){
     mid->size = total;
     ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;
     return mid;
   }
+  // Access relevant header and footer.
   Footer* left_f = (Footer*)((char*)mid - FOOTER_SIZE);
   Header* left = (Header*)((char*)mid - left_f->size);
+  // Check if the block is not free.
   if (left->size & 1){
     mid->size = total;
     ((Footer*)((char*)mid + mid->size - FOOTER_SIZE))->size = total;

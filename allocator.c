@@ -33,7 +33,7 @@
 #define TRACE_CLASS -1
 #endif
 
-#if TRACE_CLASS == 3 || TRACE_CLASS == 6
+#if TRACE_CLASS == 3 || TRACE_CLASS == 6 
 #include "./pow2_alloc.h"
 #else
 #include "./range_alloc.h"
