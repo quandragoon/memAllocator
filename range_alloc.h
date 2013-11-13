@@ -83,31 +83,6 @@
   #endif
 #endif
 
-#ifndef MAX_DIFF
-  #if (TRACE_CLASS == 0)
-    #define MAX_DIFF 262144
-  #elif (TRACE_CLASS == 1)
-    #define MAX_DIFF 131072
-  #elif (TRACE_CLASS == 2)
-    #define MAX_DIFF 128
-  #elif (TRACE_CLASS == 3)
-    #define MAX_DIFF 32768
-  #elif (TRACE_CLASS == 4)
-    #define MAX_DIFF 262144
-  #elif (TRACE_CLASS == 5)
-    #define MAX_DIFF 262144
-  #elif (TRACE_CLASS == 6)
-    #define MAX_DIFF 262144
-  #elif (TRACE_CLASS == 7)
-    #define MAX_DIFF 262144
-  #elif (TRACE_CLASS == 8)
-    #define MAX_DIFF 131072
-  #else
-    #define MAX_DIFF 512
-  #endif
-#endif
-
-// #define MIN_BLOCK_SIZE 4
 
 // All blocks must have a specified minimum alignment.
 // The alignment requirement (from config.h) is >= 8 bytes.
@@ -217,29 +192,11 @@ static inline size_t log_upper(size_t val) {
   return r+1;
 }
 
-
+// add a block to freeing list
 static inline void add_to_list(Header* cur) {
     size_t index = log_upper(cur->size);
-    // Header* p = NULL;
     Header* c = FreeList[index];
 
-    /*
-    while(c && c->size < SIZE(cur->size)){
-      p = c;
-      c = c->next;
-    }
-    cur->next = c;
-    if(c)
-      c->prev = cur;
-    if (!p){
-      FreeList[index] = cur;
-      cur->prev = NULL;
-    }
-    else{
-      p->next = cur;
-      cur->prev = p;
-    }
-    */
     cur->next = c;
     if (c)
       c->prev = cur;
