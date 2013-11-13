@@ -267,10 +267,10 @@ static inline void chunk (Header* cur, size_t aligned_size){
 }
 
 static inline size_t max (size_t x, size_t y){
-  return (x > y) ? x : y;
+  return x ^ ((x ^ y) & -(x < y));
 }
 static inline size_t min (size_t x, size_t y){
-  return (x < y) ? x : y;
+  return y ^ ((x ^ y) & -(x < y));
 }
 
 //  malloc - Allocate a block by incrementing the brk pointer.
