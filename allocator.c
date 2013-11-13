@@ -432,36 +432,6 @@ void remove_from_list(Header* node){
   node->next = NULL;
 }
 
-// Adds a node to the list.
-void add_to_list(Header* cur) {
-  size_t index = log_upper(cur->size);
-
-  Header* p = NULL;
-  Header* c = FreeList[index];
-
-  while(c && c->size < cur->size){
-    p = c;
-    c = c->next;
-  }
-
-  cur->next = c;
-  if(c)
-    c->prev = cur;
-
-  if (!p){
-    FreeList[index] = cur;
-    cur->prev = NULL;
-  }
-  else{
-    p->next = cur;
-    cur->prev = p;
-  }
-
-  cur->free = 1;
-}
-
-
-
 // takes a mid block, checks left and right to see if coalescing is possible.
 Header* coalesce (Header * mid){
   size_t total = mid->size;
